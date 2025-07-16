@@ -1,45 +1,39 @@
 import streamlit as st
 import pdfplumber
 import pandas as pd
-from io import BytesIO
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Conversor de Cartão de Ponto para CSV")
-st.title("🕒 Conversor de Cartão de Ponto (PDF ➜ CSV)")
+st.set_page_config(page_title="Conversor Cartão de Ponto")
+st.title("Conversor Cartão de Ponto ➜ CSV")
 
-uploaded_file = st.file_uploader("Envie o cartão de ponto (PDF com texto)", type="pdf")
-
+uploaded_file = st.file_uploader("Envie seu PDF de cartão de ponto", type="pdf")
 if uploaded_file:
     with pdfplumber.open(uploaded_file) as pdf:
-        text = ''
-        for page in pdf.pages:
-            text += page.extract_text() + "\n"
+        text = "\n".join(p.extract_text() or "" for p in pdf.pages)
 
-    linhas = [linha for linha in text.split("\n") if linha.strip()]
-    
-    dados = []
-    for linha in linhas:
-        partes = linha.strip().split()
-        if len(partes) >= 3:
-            data = partes[0]
-            entrada = partes[1]
-            saida = partes[2]
-            dados.append({
-                "Data": data,
-                "Entrada": entrada,
-                "Saída": saida
-            })
+    linhas = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    registros = {}
+    for ln in linhas:
+        partes = ln.split()
+        if len(partes) >= 3 and partes[0].count("/") >= 1:
+            data, entrada, saida = partes[0], partes[1], partes[2]
+            registros[data] = (entrada, saida)
 
-    if dados:
-        df = pd.DataFrame(dados)
-        st.subheader("📄 Resultado:")
-        st.dataframe(df)
-
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label="⬇️ Baixar CSV",
-            data=csv,
-            file_name="cartao_ponto_convertido.csv",
-            mime="text/csv"
-        )
+    datas = sorted(datetime.strptime(d, "%d/%m/%Y") for d in registros.keys())
+    if not datas:
+        st.warning("Nenhum registro de ponto encontrado.")
     else:
-        st.warning("⚠️ Nenhum dado válido foi encontrado no PDF.")
+        inicio, fim = datas[0], datas[-1]
+        dias = (fim - inicio).days + 1
+        rows = []
+        for i in range(dias):
+            d = inicio + timedelta(days=i)
+            ds = d.strftime("%d/%m/%Y")
+            ent, sai = registros.get(ds, ("", ""))
+            rows.append({"Data": ds, "Entrada": ent, "Saída": sai})
+
+        df = pd.DataFrame(rows)
+        st.dataframe(df)
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Baixar CSV", data=csv,
+                           file_name="cartao_convertido.csv", mime="text/csv")

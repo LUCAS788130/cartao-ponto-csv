@@ -17,17 +17,3 @@ if uploaded_file:
     for ln in linhas:
         partes = ln.split()
         if len(partes) >= 3 and "/" in partes[0]:
-            try:
-                datetime.strptime(partes[0], "%d/%m/%Y")  # valida formato
-                data = partes[0]
-                entrada = partes[1] if ":" in partes[1] else ""
-                saida = partes[2] if ":" in partes[2] else ""
-                registros[data] = (entrada, saida)
-            except:
-                pass
-
-    if registros:
-        datas_convertidas = [datetime.strptime(d, "%d/%m/%Y") for d in registros.keys()]
-        start, end = min(datas_convertidas), max(datas_convertidas)
-
-        datas_corridas = pd.date_range(start=start, end=end).to_pydatetime().t_

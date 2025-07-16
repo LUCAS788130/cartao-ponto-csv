@@ -14,13 +14,20 @@ if uploaded_file:
     linhas = [linha.strip() for linha in text.split("\n") if linha.strip()]
     registros = {}
 
+    # Lista de ocorrências a ignorar (com horários em branco)
+    palavras_ocorrencias = ["D.S.R", "ATESTADO", "FERIADO", "FÉRIAS", "COMPENSA", "FOLGA", "LICENÇA"]
+
     for ln in linhas:
         partes = ln.split()
         if len(partes) >= 2 and "/" in partes[0]:
             try:
                 data = datetime.strptime(partes[0], "%d/%m/%Y").date()
-                horarios = [p for p in partes[2:] if ":" in p and len(p) == 5]
-                registros[data] = horarios
+                conteudo = " ".join(partes[1:]).upper()
+                if any(p in conteudo for p in palavras_ocorrencias):
+                    registros[data] = []  # Ocorrência = sem horários
+                else:
+                    horarios = [p for p in partes[2:] if ":" in p and len(p) == 5]
+                    registros[data] = horarios
             except:
                 pass
 
@@ -34,10 +41,6 @@ if uploaded_file:
         for dia in dias_corridos:
             linha = {"Data": dia.strftime("%d/%m/%Y")}
             horarios = registros.get(dia, [])
-
-            # Se for domingo, ignora os horários mas mantém linha
-            if dia.weekday() == 6:
-                horarios = []
 
             for i in range(6):
                 entrada = horarios[i * 2] if len(horarios) > i * 2 else ""

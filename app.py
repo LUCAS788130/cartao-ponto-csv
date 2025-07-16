@@ -13,27 +13,19 @@ if uploaded_file:
 
     linhas = [ln.strip() for ln in text.split("\n") if ln.strip()]
     registros = {}
+
     for ln in linhas:
         partes = ln.split()
-        if len(partes) >= 3 and partes[0].count("/") >= 1:
-            data, entrada, saida = partes[0], partes[1], partes[2]
-            registros[data] = (entrada, saida)
+        if len(partes) >= 3 and "/" in partes[0]:
+            try:
+                datetime.strptime(partes[0], "%d/%m/%Y")  # valida formato
+                data = partes[0]
+                entrada = partes[1] if ":" in partes[1] else ""
+                saida = partes[2] if ":" in partes[2] else ""
+                registros[data] = (entrada, saida)
+            except:
+                pass
 
-    datas = sorted(datetime.strptime(d, "%d/%m/%Y") for d in registros.keys())
-    if not datas:
-        st.warning("Nenhum registro de ponto encontrado.")
-    else:
-        inicio, fim = datas[0], datas[-1]
-        dias = (fim - inicio).days + 1
-        rows = []
-        for i in range(dias):
-            d = inicio + timedelta(days=i)
-            ds = d.strftime("%d/%m/%Y")
-            ent, sai = registros.get(ds, ("", ""))
-            rows.append({"Data": ds, "Entrada": ent, "Saída": sai})
-
-        df = pd.DataFrame(rows)
-        st.dataframe(df)
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Baixar CSV", data=csv,
-                           file_name="cartao_convertido.csv", mime="text/csv")
+    if registros:
+        datas_convertidas = [datetime.strptime(d, "%d/%m/%Y") for d in registros.keys()]
+        inicio, fim = min(datas_convertidas), m_

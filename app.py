@@ -18,4 +18,43 @@ if uploaded_file:
         partes = ln.split()
         if len(partes) >= 2 and "/" in partes[0]:
             try:
-                data = datetime.strptime(partes[0],
+                data = datetime.strptime(partes[0], "%d/%m/%Y").date()
+                if data.weekday() == 6:  # Ignorar domingos (0=segunda, 6=domingo)
+                    continue
+                # Coletar todos os horários no formato HH:MM (ignorando "Seg-Norm", "D.S.R", etc)
+                horarios = [p for p in partes[2:] if ":" in p and len(p) == 5]
+                registros[data] = horarios
+            except:
+                pass
+
+    if registros:
+        inicio = min(registros.keys())
+        fim = max(registros.keys())
+
+        dias_corridos = [inicio + timedelta(days=i) for i in range((fim - inicio).days + 1)]
+        tabela = []
+
+        for dia in dias_corridos:
+            if dia.weekday() == 6:  # Ignorar domingos
+                continue
+
+            linha = {"Data": dia.strftime("%d/%m/%Y")}
+            horarios = registros.get(dia, [])
+
+            # Preencher Entrada1–Saída6 (até 12 colunas de horário)
+            for i in range(6):
+                entrada = horarios[i * 2] if len(horarios) > i * 2 else ""
+                saida = horarios[i * 2 + 1] if len(horarios) > i * 2 + 1 else ""
+                linha[f"Entrada{i+1}"] = entrada
+                linha[f"Saída{i+1}"] = saida
+
+            tabela.append(linha)
+
+        df = pd.DataFrame(tabela)
+        st.subheader("📋 Resultado:")
+        st.dataframe(df, use_container_width=True)
+
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Baixar CSV", data=csv, file_name="cartao_convertido.csv", mime="text/csv")
+    else:
+        st.warning("❌ Nenhum registro válido encontrado.")

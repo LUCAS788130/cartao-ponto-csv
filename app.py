@@ -19,9 +19,6 @@ if uploaded_file:
         if len(partes) >= 2 and "/" in partes[0]:
             try:
                 data = datetime.strptime(partes[0], "%d/%m/%Y").date()
-                if data.weekday() == 6:  # Ignorar domingos (0=segunda, 6=domingo)
-                    continue
-                # Coletar todos os horários no formato HH:MM (ignorando "Seg-Norm", "D.S.R", etc)
                 horarios = [p for p in partes[2:] if ":" in p and len(p) == 5]
                 registros[data] = horarios
             except:
@@ -35,13 +32,13 @@ if uploaded_file:
         tabela = []
 
         for dia in dias_corridos:
-            if dia.weekday() == 6:  # Ignorar domingos
-                continue
-
             linha = {"Data": dia.strftime("%d/%m/%Y")}
             horarios = registros.get(dia, [])
 
-            # Preencher Entrada1–Saída6 (até 12 colunas de horário)
+            # Se for domingo, ignora os horários mas mantém linha
+            if dia.weekday() == 6:
+                horarios = []
+
             for i in range(6):
                 entrada = horarios[i * 2] if len(horarios) > i * 2 else ""
                 saida = horarios[i * 2 + 1] if len(horarios) > i * 2 + 1 else ""

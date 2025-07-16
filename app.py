@@ -14,22 +14,20 @@ if uploaded_file:
     linhas = [linha.strip() for linha in text.split("\n") if linha.strip()]
     registros = {}
 
+    def eh_horario(p):
+        return ":" in p and len(p) == 5 and p.replace(":", "").isdigit()
+
     for ln in linhas:
         partes = ln.split()
         if len(partes) >= 2 and "/" in partes[0]:
             try:
                 data = datetime.strptime(partes[0], "%d/%m/%Y").date()
+                pos_dia = partes[2:]  # ignora partes[0] (data) e partes[1] (dia da semana)
 
-                # Extrai apenas os elementos HH:MM
-                horarios = [p for p in partes if ":" in p and len(p) == 5]
-
-                # Se houver qualquer elemento que NÃO seja horário, é ocorrência → ignora horários
-                tem_ocorrencia = any(
-                    (p not in horarios and not p == partes[0]) for p in partes
-                )
+                tem_ocorrencia = any(not eh_horario(p) for p in pos_dia)
+                horarios = [p for p in pos_dia if eh_horario(p)]
 
                 registros[data] = [] if tem_ocorrencia else horarios
-
             except:
                 pass
 

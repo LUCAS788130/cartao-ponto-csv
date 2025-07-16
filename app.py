@@ -1,42 +1,48 @@
 import streamlit as st
 import pdfplumber
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Conversor Cartão de Ponto")
-st.title("Conversor Cartão de Ponto ➜ CSV")
+st.set_page_config(page_title="Conversor Cartão de Ponto ➜ CSV")
+st.title("📅 Conversor Cartão de Ponto ➜ CSV")
 
 uploaded_file = st.file_uploader("Envie seu PDF de cartão de ponto", type="pdf")
 if uploaded_file:
     with pdfplumber.open(uploaded_file) as pdf:
         text = "\n".join(page.extract_text() or "" for page in pdf.pages)
 
-    linhas = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    linhas = [linha.strip() for linha in text.split("\n") if linha.strip()]
     registros = {}
 
     for ln in linhas:
         partes = ln.split()
-        if len(partes) >= 3 and "/" in partes[0]:
+        if len(partes) >= 2 and "/" in partes[0]:
             try:
-                datetime.strptime(partes[0], "%d/%m/%Y")  # valida data
-                data = partes[0]
-                entrada = partes[1] if ":" in partes[1] else ""
-                saida = partes[2] if ":" in partes[2] else ""
-                registros[data] = (entrada, saida)
-            except Exception:
+                data = datetime.strptime(partes[0], "%d/%m/%Y").date()
+                # coleta somente os horários no formato HH:MM
+                horarios = [p for p in partes[2:] if ":" in p and len(p) == 5]
+                registros[data] = horarios
+            except:
                 pass
 
     if registros:
-        datas_convertidas = [datetime.strptime(d, "%d/%m/%Y") for d in registros.keys()]
-        start, end = min(datas_convertidas), max(datas_convertidas)
+        inicio = min(registros.keys())
+        fim = max(registros.keys())
+        datas_corridas = [inicio + timedelta(days=i) for i in range((fim - inicio).days + 1)]
 
-        datas_corridas = list(pd.date_range(start=start, end=end))
-        linhas_saida = []
+        tabela = []
+        for data in datas_corridas:
+            horarios = registros.get(data, [])
+            linha = {"Data": data.strftime("%d/%m/%Y")}
+            for i in range(4):  # até 4 marcações por dia
+                linha[f"Horário {i+1}"] = horarios[i] if i < len(horarios) else ""
+            tabela.append(linha)
 
-        for d in datas_corridas:
-            data_str = d.strftime("%d/%m/%Y")
-            entrada, saida = registros.get(data_str, ("", ""))
-            linhas_saida.append({"Data": data_str, "Entrada": entrada, "Saída": saida})
-
-        df = pd.DataFrame(linhas_saida)
+        df = pd.DataFrame(tabela)
         st.subheader("📋 Resultado:")
+        st.dataframe(df, use_container_width=True)
+
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Baixar CSV", data=csv, file_name="cartao_convertido.csv", mime="text/csv")
+    else:
+        st.warning("❌ Nenhum registro válido encontrado.")

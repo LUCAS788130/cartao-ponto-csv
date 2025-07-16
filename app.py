@@ -28,4 +28,6 @@ if uploaded_file:
 
     if registros:
         datas_convertidas = [datetime.strptime(d, "%d/%m/%Y") for d in registros.keys()]
-        inicio, fim = min(datas_convertidas), m_
+        start, end = min(datas_convertidas), max(datas_convertidas)
+
+        datas_corridas = pd.date_range(start=start, end=end).to_pydatetime().t_

@@ -14,19 +14,18 @@ if uploaded_file:
     linhas = [linha.strip() for linha in text.split("\n") if linha.strip()]
     registros = {}
 
-    # Lista de ocorrências a ignorar (com horários em branco)
-    palavras_ocorrencias = ["D.S.R", "ATESTADO", "FERIADO", "FÉRIAS", "COMPENSA", "FOLGA", "LICENÇA"]
+    palavras_ocorrencias = ["D.S.R", "ATESTADO", "FERIADO", "FÉRIAS", "COMPENSA", "FOLGA", "LICENÇA", "AFASTAMENTO", "DESCANSO"]
 
     for ln in linhas:
         partes = ln.split()
         if len(partes) >= 2 and "/" in partes[0]:
             try:
                 data = datetime.strptime(partes[0], "%d/%m/%Y").date()
-                conteudo = " ".join(partes[1:]).upper()
-                if any(p in conteudo for p in palavras_ocorrencias):
-                    registros[data] = []  # Ocorrência = sem horários
+                conteudo_completo = " ".join(partes).upper()
+                if any(p in conteudo_completo for p in palavras_ocorrencias):
+                    registros[data] = []  # ignora os horários se tiver uma ocorrência
                 else:
-                    horarios = [p for p in partes[2:] if ":" in p and len(p) == 5]
+                    horarios = [p for p in partes if ":" in p and len(p) == 5]
                     registros[data] = horarios
             except:
                 pass

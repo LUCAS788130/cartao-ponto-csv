@@ -55,7 +55,15 @@ if uploaded_file:
         st.dataframe(df, use_container_width=True)
 
         csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Baixar CSV", data=csv, file_name="cartao_convertido.csv", mime="text/csv")
+
+        st.success("✅ Conversão concluída com sucesso! Sua planilha está pronta para download. 🚀")
+
+        st.download_button(
+            label="⬇️ Baixar CSV",
+            data=csv,
+            file_name="cartao_convertido.csv",
+            mime="text/csv",
+        )
     else:
         st.warning("❌ Nenhum registro válido encontrado.")
 

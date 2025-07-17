@@ -22,7 +22,7 @@ if uploaded_file:
         if len(partes) >= 2 and "/" in partes[0]:
             try:
                 data = datetime.strptime(partes[0], "%d/%m/%Y").date()
-                pos_dia = partes[2:]  # ignora partes[0] (data) e partes[1] (dia da semana)
+                pos_dia = partes[2:]
 
                 tem_ocorrencia = any(not eh_horario(p) for p in pos_dia)
                 horarios = [p for p in pos_dia if eh_horario(p)]
@@ -56,6 +56,7 @@ if uploaded_file:
 
         csv = df.to_csv(index=False).encode("utf-8")
 
+        st.image("https://media.giphy.com/media/du3J3cXyzhj75IOgvA/giphy.gif", width=80)
         st.success("✅ Conversão concluída com sucesso! Sua planilha está pronta para download. 🚀")
 
         st.download_button(
@@ -67,7 +68,7 @@ if uploaded_file:
     else:
         st.warning("❌ Nenhum registro válido encontrado.")
 
-# Rodapé com LGPD e nome do desenvolvedor
+# Rodapé com LGPD e desenvolvedor
 st.markdown("""
 <hr>
 <p style='text-align: center; font-size: 13px;'>

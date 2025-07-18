@@ -1,101 +1,60 @@
 import streamlit as st
 import pdfplumber
 import pandas as pd
-import re
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="CONVERSOR DE CARTÃO DE PONTO ➞ CSV")
-st.markdown("""
-<h1 style='text-align: center;'>🗓️ CONVERSOR DE CARTÃO DE PONTO <br>➞ CSV</h1>
-<h4 style='text-align: center;'>Envie seu PDF de cartão de ponto</h4>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="Conversor Cartão de Ponto ➜ CSV")
+st.title("📅 Conversor Cartão de Ponto ➜ CSV")
 
-uploaded_file = st.file_uploader("", type="pdf")
-
+uploaded_file = st.file_uploader("Envie seu PDF de cartão de ponto", type="pdf")
 if uploaded_file:
-    with st.spinner("🔄 Convertendo, aguarde..."):
-        with pdfplumber.open(uploaded_file) as pdf:
-            texto = "\n".join(page.extract_text() or "" for page in pdf.pages)
+    with pdfplumber.open(uploaded_file) as pdf:
+        text = "\n".join(page.extract_text() or "" for page in pdf.pages)
 
-        linhas = [linha.strip() for linha in texto.split("\n") if linha.strip()]
+    linhas = [linha.strip() for linha in text.split("\n") if linha.strip()]
+    registros = {}
 
-        padrao_data = re.compile(r"\d{2}/\d{2}/\d{4}")
-        padrao_hora = re.compile(r"\b\d{2}:\d{2}g?\b")
+    def eh_horario(p):
+        return ":" in p and len(p) == 5 and p.replace(":", "").isdigit()
 
-        dados = {}
-
-        def eh_layout_novo(linhas):
-            for linha in linhas[:10]:
-                if "marcacoes" in linha.lower() and "ocorr" in linha.lower():
-                    return True
-            return False
-
-        layout_novo = eh_layout_novo(linhas)
-
-        for linha in linhas:
-            partes = linha.split()
-            datas = [p for p in partes if padrao_data.fullmatch(p)]
-            if not datas:
-                continue
-
-            data_str = datas[0]
+    for ln in linhas:
+        partes = ln.split()
+        if len(partes) >= 2 and "/" in partes[0]:
             try:
-                data = datetime.strptime(data_str, "%d/%m/%Y").date()
+                data = datetime.strptime(partes[0], "%d/%m/%Y").date()
+                pos_dia = partes[2:]  # ignora partes[0] (data) e partes[1] (dia da semana)
+
+                tem_ocorrencia = any(not eh_horario(p) for p in pos_dia)
+                horarios = [p for p in pos_dia if eh_horario(p)]
+
+                registros[data] = [] if tem_ocorrencia else horarios
             except:
-                continue
+                pass
 
-            if data not in dados:
-                dados[data] = []
+    if registros:
+        inicio = min(registros.keys())
+        fim = max(registros.keys())
 
-            pos_data = linha.find(data_str)
-            depois_data = linha[pos_data + len(data_str):].strip()
+        dias_corridos = [inicio + timedelta(days=i) for i in range((fim - inicio).days + 1)]
+        tabela = []
 
-            if layout_novo:
-                colunas = re.split(r"\s{2,}", depois_data)
-                marcacoes_coluna = colunas[0] if colunas else ""
-                ocorrencias = " ".join(colunas[1:]) if len(colunas) > 1 else ""
+        for dia in dias_corridos:
+            linha = {"Data": dia.strftime("%d/%m/%Y")}
+            horarios = registros.get(dia, [])
 
-                if any(p in ocorrencias.upper() for p in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA", "INTEGRAÇÃO"]):
-                    continue
+            for i in range(6):
+                entrada = horarios[i * 2] if len(horarios) > i * 2 else ""
+                saida = horarios[i * 2 + 1] if len(horarios) > i * 2 + 1 else ""
+                linha[f"Entrada{i+1}"] = entrada
+                linha[f"Saída{i+1}"] = saida
 
-                horas = padrao_hora.findall(marcacoes_coluna)
-            else:
-                horas = padrao_hora.findall(depois_data)
+            tabela.append(linha)
 
-                if any(p.upper() in depois_data.upper() for p in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA", "INTEGRAÇÃO"]):
-                    continue
+        df = pd.DataFrame(tabela)
+        st.subheader("📋 Resultado:")
+        st.dataframe(df, use_container_width=True)
 
-            limpos = [h.replace('g', '') for h in horas]
-            dados[data].extend(limpos)
-
-        if dados:
-            inicio = min(dados)
-            fim = max(dados)
-            dias = [inicio + timedelta(days=i) for i in range((fim - inicio).days + 1)]
-
-            tabela = []
-            for dia in dias:
-                linha = {"Data": dia.strftime("%d/%m/%Y")}
-                horarios = dados.get(dia, [])
-                for i in range(6):
-                    linha[f"Entrada{i+1}"] = horarios[i*2] if len(horarios) > i*2 else ""
-                    linha[f"Saída{i+1}"] = horarios[i*2+1] if len(horarios) > i*2+1 else ""
-                tabela.append(linha)
-
-            df = pd.DataFrame(tabela)
-            st.subheader(":clipboard: Resultado:")
-            st.dataframe(df, use_container_width=True)
-
-            csv = df.to_csv(index=False).encode("utf-8")
-            st.success("Arquivo convertido com sucesso! 🎉 Clique abaixo para baixar.")
-            st.download_button("⬇️ Baixar CSV", data=csv, file_name="cartao_convertido.csv", mime="text/csv")
-        else:
-            st.warning("Nenhum registro válido encontrado no PDF.")
-
-    st.markdown("""
----
-
-:lock: Este site processa arquivos apenas temporariamente para gerar planilhas. Nenhum dado é armazenado ou compartilhado.  
-:page_facing_up: [Clique aqui para ver a Política de Privacidade](#)  
-:technologist: Desenvolvido por **Lucas de Matos Coelho**
-""", unsafe_allow_html=True)
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Baixar CSV", data=csv, file_name="cartao_convertido.csv", mime="text/csv")
+    else:
+        st.warning("❌ Nenhum registro válido encontrado.")

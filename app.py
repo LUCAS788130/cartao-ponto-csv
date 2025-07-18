@@ -12,49 +12,45 @@ st.markdown("""
 
 uploaded_file = st.file_uploader("", type="pdf")
 
-def extrair_marcacoes(texto):
-    linhas = [linha.strip() for linha in texto.split("\n") if linha.strip()]
-    padrao_data = re.compile(r"\d{2}/\d{2}/\d{4}")
-    padrao_hora = re.compile(r"\d{2}:\d{2}g?")
-
-    dados = {}
-
-    for linha in linhas:
-        partes = linha.split()
-        datas = [p for p in partes if padrao_data.fullmatch(p)]
-        if not datas:
-            continue
-
-        data_str = datas[0]
-        try:
-            data = datetime.strptime(data_str, "%d/%m/%Y").date()
-        except:
-            continue
-
-        # Encontrar posição da data e extrair apenas a parte até a coluna "Ocorrências"
-        pos_data = linha.find(data_str)
-        depois_data = linha[pos_data + len(data_str):]
-
-        # Corta a linha ao encontrar alguma palavra comum da coluna de ocorrências
-        ocorrencias_idx = len(depois_data)
-        for palavra in ["D.S.R", "FERIADO", "ATESTADO", "FÉRIAS", "HORA", "INTEGRAÇÃO", "FOLGA", "COMPENSA", "JUSTIFICATIVA"]:
-            if palavra in depois_data:
-                ocorrencias_idx = min(ocorrencias_idx, depois_data.find(palavra))
-
-        apenas_marcacoes = depois_data[:ocorrencias_idx]
-        horarios = padrao_hora.findall(apenas_marcacoes)
-
-        if horarios:
-            dados[data] = horarios
-
-    return dados
-
 if uploaded_file:
     with st.spinner("🔄 Convertendo, aguarde..."):
         with pdfplumber.open(uploaded_file) as pdf:
-            texto = "\n".join(page.extract_text() or "" for page in pdf.pages)
+            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
 
-        dados = extrair_marcacoes(texto)
+        linhas = [linha.strip() for linha in text.split("\n") if linha.strip()]
+
+        padrao_data = re.compile(r"\d{2}/\d{2}/\d{4}")
+        padrao_hora = re.compile(r"\b\d{2}:\d{2}g?\b")
+
+        dados = {}
+
+        for linha in linhas:
+            partes = linha.split()
+            datas = [p for p in partes if padrao_data.fullmatch(p)]
+            if not datas:
+                continue
+            data_str = datas[0]
+            try:
+                data = datetime.strptime(data_str, "%d/%m/%Y").date()
+            except:
+                continue
+
+            if data not in dados:
+                dados[data] = []
+
+            pos_data = linha.find(data_str)
+            depois_data = linha[pos_data + len(data_str):]
+
+            # Divide a linha depois da data em colunas simuladas (tabular)
+            colunas = re.split(r"\s{2,}", depois_data)
+            marcacoes_validas = []
+            for i, col in enumerate(colunas):
+                if any(palavra in col.upper() for palavra in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA", "INTEGRAÇÃO", "HORA TRABALHADA"]):
+                    continue
+                horas = padrao_hora.findall(col)
+                marcacoes_validas.extend(horas)
+
+            dados[data].extend(marcacoes_validas)
 
         if dados:
             inicio = min(dados)
@@ -65,9 +61,13 @@ if uploaded_file:
             for dia in dias:
                 linha = {"Data": dia.strftime("%d/%m/%Y")}
                 horarios = dados.get(dia, [])
-                for i in range(6):
-                    linha[f"Entrada{i+1}"] = horarios[i * 2] if len(horarios) > i * 2 else ""
-                    linha[f"Saída{i+1}"] = horarios[i * 2 + 1] if len(horarios) > i * 2 + 1 else ""
+
+                # Garante que temos apenas pares (Entrada/Saída)
+                pares = [horarios[i:i + 2] for i in range(0, len(horarios), 2)]
+                for i, par in enumerate(pares[:3]):  # até 3 pares
+                    linha[f"Entrada{i + 1}"] = par[0] if len(par) > 0 else ""
+                    linha[f"Saída{i + 1}"] = par[1] if len(par) > 1 else ""
+
                 tabela.append(linha)
 
             df = pd.DataFrame(tabela)
@@ -75,15 +75,15 @@ if uploaded_file:
             st.dataframe(df, use_container_width=True)
 
             csv = df.to_csv(index=False).encode("utf-8")
-            st.success("✅ Arquivo convertido com sucesso!")
+            st.success("Arquivo convertido com sucesso! 🎉 Clique abaixo para baixar.")
             st.download_button("⬇️ Baixar CSV", data=csv, file_name="cartao_convertido.csv", mime="text/csv")
         else:
-            st.warning("⚠️ Nenhum horário válido encontrado. Verifique o layout do seu cartão.")
+            st.warning("Nenhum registro válido encontrado no PDF.")
 
     st.markdown("""
 ---
 
-🔒 Este site processa arquivos apenas temporariamente. Nenhum dado é armazenado ou compartilhado.  
-📄 [Política de Privacidade](#)  
-👨‍💻 Desenvolvido por **Lucas de Matos Coelho**
+:lock: Este site processa arquivos apenas temporariamente para gerar planilhas. Nenhum dado é armazenado ou compartilhado.  
+:page_facing_up: [Clique aqui para ver a Política de Privacidade](#)  
+:technologist: Desenvolvido por **Lucas de Matos Coelho**
 """, unsafe_allow_html=True)

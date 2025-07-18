@@ -24,10 +24,13 @@ if uploaded_file:
 
         dados = {}
 
-        def eh_layout_novo(cabecalho):
-            return ("ocorr" in cabecalho.lower() or "justif" in cabecalho.lower())
+        def eh_layout_novo(linhas):
+            for linha in linhas[:10]:
+                if "marcacoes" in linha.lower() and "ocorr" in linha.lower():
+                    return True
+            return False
 
-        layout_novo = any(eh_layout_novo(l) for l in linhas[:10])
+        layout_novo = eh_layout_novo(linhas)
 
         for linha in linhas:
             partes = linha.split()
@@ -45,22 +48,24 @@ if uploaded_file:
                 dados[data] = []
 
             pos_data = linha.find(data_str)
-            depois_data = linha[pos_data + len(data_str):]
+            depois_data = linha[pos_data + len(data_str):].strip()
 
-            colunas = re.split(r"\s{2,}", depois_data)
-
-            if any(x in depois_data.upper() for x in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA", "INTEGRAÇÃO"]):
-                continue
-
-            marcacoes = []
             if layout_novo:
-                if colunas:
-                    col_marcacoes = colunas[0]  # apenas a primeira coluna
-                    marcacoes = padrao_hora.findall(col_marcacoes)
-            else:
-                marcacoes = padrao_hora.findall(depois_data)
+                colunas = re.split(r"\s{2,}", depois_data)
+                marcacoes_coluna = colunas[0] if colunas else ""
+                ocorrencias = " ".join(colunas[1:]) if len(colunas) > 1 else ""
 
-            limpos = [h.replace('g', '') for h in marcacoes]
+                if any(p in ocorrencias.upper() for p in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA", "INTEGRAÇÃO"]):
+                    continue
+
+                horas = padrao_hora.findall(marcacoes_coluna)
+            else:
+                horas = padrao_hora.findall(depois_data)
+
+                if any(p.upper() in depois_data.upper() for p in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA", "INTEGRAÇÃO"]):
+                    continue
+
+            limpos = [h.replace('g', '') for h in horas]
             dados[data].extend(limpos)
 
         if dados:

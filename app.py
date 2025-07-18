@@ -18,10 +18,11 @@ if uploaded_file:
         registros = {}
 
         def limpar_horario(p):
-            return p[:5] if re.fullmatch(r"\d{2}:\d{2}[a-zA-Z]?", p) else None
+            match = re.match(r"(\d{2}:\d{2})[a-zA-Z]?$", p)
+            return match.group(1) if match else None
 
-        def eh_ocorrencia(linha):
-            return any(palavra in linha.upper() for palavra in ["FERIADO", "D.S.R", "FOLG", "INTEGRAÇÃO", "ATESTADO", "FÉRIAS", "LICENÇA", "COMPENSA"])
+        def eh_ocorrencia(palavra):
+            return any(oc in palavra.upper() for oc in ["FERIADO", "D.S.R", "FOLG", "INTEGRAÇÃO", "ATESTADO", "FÉRIAS", "LICENÇA", "COMPENSA"])
 
         for ln in linhas:
             partes = ln.split()
@@ -31,11 +32,18 @@ if uploaded_file:
                 except:
                     continue
 
-                if eh_ocorrencia(ln):
-                    registros[data] = []
-                else:
-                    horarios = [limpar_horario(p) for p in partes if limpar_horario(p)]
-                    registros[data] = horarios
+                horarios = []
+                for p in partes[2:]:  # ignora data e dia da semana
+                    if eh_ocorrencia(p):
+                        horarios = []  # ignora todos se for dia não útil
+                        break
+                    hora_limpa = limpar_horario(p)
+                    if hora_limpa:
+                        horarios.append(hora_limpa)
+                    else:
+                        break  # parou nas colunas de jornada/ocorrência/justificativa
+
+                registros[data] = horarios
 
         if registros:
             inicio = min(registros.keys())
@@ -56,7 +64,7 @@ if uploaded_file:
             st.dataframe(df, use_container_width=True)
 
             csv = df.to_csv(index=False).encode("utf-8")
-            st.success("✅ Conversão concluída! Pronto para download.")
+            st.success("✅ Conversão concluída com sucesso!")
             st.download_button("⬇️ Baixar CSV", csv, "cartao_convertido.csv", "text/csv")
         else:
             st.warning("⚠️ Nenhum registro válido foi encontrado.")

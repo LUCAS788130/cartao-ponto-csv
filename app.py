@@ -38,19 +38,21 @@ if uploaded_file:
             if data not in dados:
                 dados[data] = []
 
-            # Encontrar os blocos após a data
             pos_data = linha.find(data_str)
-            depois_data = linha[pos_data + len(data_str):]
+            depois_data = linha[pos_data + len(data_str):].strip()
 
-            # Separar por colunas tabulares (2+ espaços consecutivos)
             colunas = re.split(r"\s{2,}", depois_data)
-            marcacoes = []
+            if len(colunas) < 2:
+                continue
 
-            for col in colunas[:2]:  # Considera apenas as duas primeiras colunas (marcações)
-                horas = padrao_hora.findall(col)
-                marcacoes.extend(horas)
+            marcacoes_texto = colunas[0]  # considera apenas a 1ª coluna após a data (marcações)
+            ocorrencias_texto = " ".join(colunas[1:])  # concatena as demais (ocorrências e justificativas)
 
-            dados[data].extend(marcacoes)
+            todas_marcacoes = padrao_hora.findall(marcacoes_texto)
+            ocorrencias_horarios = set(padrao_hora.findall(ocorrencias_texto))
+
+            horarios_finais = [h for h in todas_marcacoes if h not in ocorrencias_horarios]
+            dados[data].extend(horarios_finais)
 
         if dados:
             inicio = min(dados)
@@ -82,4 +84,3 @@ if uploaded_file:
 :lock: Este site processa arquivos apenas temporariamente para gerar planilhas. Nenhum dado é armazenado ou compartilhado.  
 :page_facing_up: [Clique aqui para ver a Política de Privacidade](#)  
 :technologist: Desenvolvido por **Lucas de Matos Coelho**
-""", unsafe_allow_html=True)

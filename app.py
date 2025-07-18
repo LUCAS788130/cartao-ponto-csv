@@ -15,9 +15,9 @@ uploaded_file = st.file_uploader("", type="pdf")
 if uploaded_file:
     with st.spinner("🔄 Convertendo, aguarde..."):
         with pdfplumber.open(uploaded_file) as pdf:
-            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+            texto = "\n".join(page.extract_text() or "" for page in pdf.pages)
 
-        linhas = [linha.strip() for linha in text.split("\n") if linha.strip()]
+        linhas = [linha.strip() for linha in texto.split("\n") if linha.strip()]
 
         padrao_data = re.compile(r"\d{2}/\d{2}/\d{4}")
         padrao_hora = re.compile(r"\b\d{2}:\d{2}g?\b")
@@ -29,6 +29,7 @@ if uploaded_file:
             datas = [p for p in partes if padrao_data.fullmatch(p)]
             if not datas:
                 continue
+
             data_str = datas[0]
             try:
                 data = datetime.strptime(data_str, "%d/%m/%Y").date()
@@ -42,17 +43,19 @@ if uploaded_file:
             depois_data = linha[pos_data + len(data_str):]
 
             colunas = re.split(r"\s{2,}", depois_data)
-            horarios_validos = []
+            marcacoes = []
 
             for i, col in enumerate(colunas):
-                if any(p in col.upper() for p in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA"]):
+                col_upper = col.upper()
+                if any(p in col_upper for p in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA", "INTEGRAÇÃO"]):
                     continue
-                if i == 1:  # coluna de marcações
-                    horarios_validos = padrao_hora.findall(col)
+                horas = padrao_hora.findall(col)
+                if i == 0:  # primeira coluna (marcacoes)
+                    marcacoes.extend(horas)
 
-            # limpa o 'g' e ordena
-            horarios_limpos = sorted(h.replace("g", "") for h in horarios_validos)
-            dados[data].extend(horarios_limpos)
+            # remove o 'g' se houver
+            limpos = [h.replace('g','') for h in marcacoes]
+            dados[data].extend(limpos)
 
         if dados:
             inicio = min(dados)
@@ -63,7 +66,7 @@ if uploaded_file:
             for dia in dias:
                 linha = {"Data": dia.strftime("%d/%m/%Y")}
                 horarios = dados.get(dia, [])
-                for i in range(3):  # até 3 pares
+                for i in range(6):
                     linha[f"Entrada{i+1}"] = horarios[i*2] if len(horarios) > i*2 else ""
                     linha[f"Saída{i+1}"] = horarios[i*2+1] if len(horarios) > i*2+1 else ""
                 tabela.append(linha)

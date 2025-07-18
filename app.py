@@ -38,28 +38,19 @@ if uploaded_file:
             if data not in dados:
                 dados[data] = []
 
-            # Considera apenas os dados antes da coluna "Ocorrências"
-            if "Ocorr" in linha:
-                continue
             pos_data = linha.find(data_str)
             depois_data = linha[pos_data + len(data_str):]
-            partes = depois_data.split()
 
-            # Ignora qualquer trecho da linha após encontrar palavras de ocorrência
-            ocorrencias_idx = None
-            for i, parte in enumerate(partes):
-                if any(p in parte.upper() for p in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA"]):
-                    ocorrencias_idx = i
-                    break
-            if ocorrencias_idx is not None:
-                partes = partes[:ocorrencias_idx]
+            # Divide a linha depois da data em colunas simuladas (tabular)
+            colunas = re.split(r"\s{2,}", depois_data)
+            marcacoes_validas = []
+            for i, col in enumerate(colunas):
+                if any(palavra in col.upper() for palavra in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA", "INTEGRAÇÃO", "HORA TRABALHADA"]):
+                    continue
+                horas = padrao_hora.findall(col)
+                marcacoes_validas.extend(horas)
 
-            # Agora coleta os horários restantes da parte esquerda (marcações)
-            horarios = [h for h in partes if padrao_hora.fullmatch(h)]
-
-            # Se tiver menos de 2, não considera esse dia (não trabalhou)
-            if len(horarios) >= 2:
-                dados[data].extend(horarios)
+            dados[data].extend(marcacoes_validas)
 
         if dados:
             inicio = min(dados)
@@ -70,9 +61,13 @@ if uploaded_file:
             for dia in dias:
                 linha = {"Data": dia.strftime("%d/%m/%Y")}
                 horarios = dados.get(dia, [])
-                for i in range(2):
-                    linha[f"Entrada{i+1}"] = horarios[i*2] if len(horarios) > i*2 else ""
-                    linha[f"Saída{i+1}"] = horarios[i*2+1] if len(horarios) > i*2+1 else ""
+
+                # Garante que temos apenas pares (Entrada/Saída)
+                pares = [horarios[i:i + 2] for i in range(0, len(horarios), 2)]
+                for i, par in enumerate(pares[:3]):  # até 3 pares
+                    linha[f"Entrada{i + 1}"] = par[0] if len(par) > 0 else ""
+                    linha[f"Saída{i + 1}"] = par[1] if len(par) > 1 else ""
+
                 tabela.append(linha)
 
             df = pd.DataFrame(tabela)

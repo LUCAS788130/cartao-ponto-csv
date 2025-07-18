@@ -84,3 +84,4 @@ if uploaded_file:
 :lock: Este site processa arquivos apenas temporariamente para gerar planilhas. Nenhum dado é armazenado ou compartilhado.  
 :page_facing_up: [Clique aqui para ver a Política de Privacidade](#)  
 :technologist: Desenvolvido por **Lucas de Matos Coelho**
+""", unsafe_allow_html=True)

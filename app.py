@@ -48,17 +48,17 @@ if uploaded_file:
             depois_data = linha[pos_data + len(data_str):]
 
             colunas = re.split(r"\s{2,}", depois_data)
-            marcacoes = []
 
-            for i, col in enumerate(colunas):
-                col_upper = col.upper()
-                if any(p in col_upper for p in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA", "INTEGRAÇÃO"]):
-                    marcacoes = []
-                    break
-                if layout_novo and i > 0:
-                    continue  # só considera a primeira coluna no novo layout
-                horas = padrao_hora.findall(col)
-                marcacoes.extend(horas)
+            if any(x in depois_data.upper() for x in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA", "INTEGRAÇÃO"]):
+                continue
+
+            marcacoes = []
+            if layout_novo:
+                if colunas:
+                    col_marcacoes = colunas[0]  # apenas a primeira coluna
+                    marcacoes = padrao_hora.findall(col_marcacoes)
+            else:
+                marcacoes = padrao_hora.findall(depois_data)
 
             limpos = [h.replace('g', '') for h in marcacoes]
             dados[data].extend(limpos)

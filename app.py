@@ -13,14 +13,13 @@ st.markdown("""
 uploaded_file = st.file_uploader("", type="pdf")
 
 if uploaded_file:
-    with st.spinner("⏳ Convertendo seu arquivo... Por favor, aguarde!"):
+    with st.spinner("⏳ Convertendo seu cartão de ponto, aguarde..."):
         with pdfplumber.open(uploaded_file) as pdf:
             text = "\n".join(page.extract_text() or "" for page in pdf.pages)
 
         linhas = [linha.strip() for linha in text.split("\n") if linha.strip()]
         padrao_data = re.compile(r"\d{2}/\d{2}/\d{4}")
         padrao_hora = re.compile(r"\b\d{2}:\d{2}g?\b")
-
         dados = {}
 
         for linha in linhas:
@@ -39,18 +38,18 @@ if uploaded_file:
                 dados[data] = []
 
             pos_data = linha.find(data_str)
-            depois_data = linha[pos_data + len(data_str):]
+            depois_data = linha[pos_data + len(data_str):].strip()
 
             colunas = re.split(r"\s{2,}", depois_data)
             marcacoes = []
 
             for col in colunas:
-                # Ignorar colunas com palavras típicas de ocorrência
-                if any(palavra in col.upper() for palavra in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA"]):
-                    continue
-                # extrai horários apenas da parte de marcações
-                horas = padrao_hora.findall(col)
-                marcacoes.extend(horas)
+                col_upper = col.upper()
+                if any(ocorr in col_upper for ocorr in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA"]):
+                    # Se a coluna for ocorrência, paramos a extração aqui
+                    break
+                horarios = padrao_hora.findall(col)
+                marcacoes.extend(horarios)
 
             dados[data].extend(sorted(marcacoes))
 
@@ -63,9 +62,9 @@ if uploaded_file:
             for dia in dias:
                 linha = {"Data": dia.strftime("%d/%m/%Y")}
                 horarios = dados.get(dia, [])
-                for i in range(6):
-                    linha[f"Entrada{i+1}"] = horarios[i * 2] if len(horarios) > i * 2 else ""
-                    linha[f"Saída{i+1}"] = horarios[i * 2 + 1] if len(horarios) > i * 2 + 1 else ""
+                for i in range(3):
+                    linha[f"Entrada{i+1}"] = horarios[i*2] if len(horarios) > i*2 else ""
+                    linha[f"Saída{i+1}"] = horarios[i*2+1] if len(horarios) > i*2+1 else ""
                 tabela.append(linha)
 
             df = pd.DataFrame(tabela)
@@ -73,7 +72,7 @@ if uploaded_file:
             st.dataframe(df, use_container_width=True)
 
             csv = df.to_csv(index=False).encode("utf-8")
-            st.success("✅ Conversão finalizada! Seu arquivo está pronto para download.")
+            st.success("✅ Arquivo CSV está pronto! Baixe abaixo.")
             st.download_button("⬇️ Baixar CSV", data=csv, file_name="cartao_convertido.csv", mime="text/csv")
         else:
             st.warning("❌ Nenhum registro válido encontrado no PDF.")
@@ -81,7 +80,7 @@ if uploaded_file:
     st.markdown("""
 ---
 
-:lock: Este site processa arquivos apenas temporariamente para gerar planilhas. Nenhum dado é armazenado ou compartilhado.  
-:page_facing_up: [Clique aqui para ver a Política de Privacidade](#)  
-:technologist: Desenvolvido por **Lucas de Matos Coelho**
+🔒 Este site processa os arquivos apenas temporariamente. Nenhum dado é salvo ou compartilhado.  
+📄 [Política de Privacidade](#)  
+👨‍💻 Desenvolvido por **Lucas de Matos Coelho**
 """, unsafe_allow_html=True)

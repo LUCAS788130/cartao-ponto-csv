@@ -41,16 +41,18 @@ if uploaded_file:
             pos_data = linha.find(data_str)
             depois_data = linha[pos_data + len(data_str):]
 
-            # Divide a linha depois da data em colunas simuladas (tabular)
             colunas = re.split(r"\s{2,}", depois_data)
-            marcacoes_validas = []
-            for i, col in enumerate(colunas):
-                if any(palavra in col.upper() for palavra in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA", "INTEGRAÇÃO", "HORA TRABALHADA"]):
-                    continue
-                horas = padrao_hora.findall(col)
-                marcacoes_validas.extend(horas)
+            horarios_validos = []
 
-            dados[data].extend(marcacoes_validas)
+            for i, col in enumerate(colunas):
+                if any(p in col.upper() for p in ["FERIADO", "D.S.R", "DSR", "ATESTADO", "FOLGA", "FÉRIAS", "COMPENSA"]):
+                    continue
+                if i == 1:  # coluna de marcações
+                    horarios_validos = padrao_hora.findall(col)
+
+            # limpa o 'g' e ordena
+            horarios_limpos = sorted(h.replace("g", "") for h in horarios_validos)
+            dados[data].extend(horarios_limpos)
 
         if dados:
             inicio = min(dados)
@@ -61,13 +63,9 @@ if uploaded_file:
             for dia in dias:
                 linha = {"Data": dia.strftime("%d/%m/%Y")}
                 horarios = dados.get(dia, [])
-
-                # Garante que temos apenas pares (Entrada/Saída)
-                pares = [horarios[i:i + 2] for i in range(0, len(horarios), 2)]
-                for i, par in enumerate(pares[:3]):  # até 3 pares
-                    linha[f"Entrada{i + 1}"] = par[0] if len(par) > 0 else ""
-                    linha[f"Saída{i + 1}"] = par[1] if len(par) > 1 else ""
-
+                for i in range(3):  # até 3 pares
+                    linha[f"Entrada{i+1}"] = horarios[i*2] if len(horarios) > i*2 else ""
+                    linha[f"Saída{i+1}"] = horarios[i*2+1] if len(horarios) > i*2+1 else ""
                 tabela.append(linha)
 
             df = pd.DataFrame(tabela)

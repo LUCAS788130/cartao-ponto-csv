@@ -12,48 +12,45 @@ st.markdown("""
 
 uploaded_file = st.file_uploader("", type="pdf")
 
-def extrair_marcacoes_por_linha(texto):
-    padrao_data = re.compile(r"\d{2}/\d{2}/\d{4}")
-    padrao_hora = re.compile(r"\b\d{2}:\d{2}g?\b")
-
-    dados = {}
-    linhas = texto.split("\n")
-
-    for linha in linhas:
-        partes = linha.split()
-        datas = [p for p in partes if padrao_data.fullmatch(p)]
-        if not datas:
-            continue
-
-        data_str = datas[0]
-        try:
-            data = datetime.strptime(data_str, "%d/%m/%Y").date()
-        except:
-            continue
-
-        if data not in dados:
-            dados[data] = []
-
-        # Remove conteúdo após a palavra "Ocorrência" ou semelhantes para evitar confusão
-        corte_ocorrencia = re.search(r"Ocor[rêe]ncias|Justificativas", linha, re.IGNORECASE)
-        if corte_ocorrencia:
-            linha = linha[:corte_ocorrencia.start()]
-
-        # Extrai horários diretamente antes da parte de Ocorrências
-        horarios = padrao_hora.findall(linha)
-
-        # Só considera marcações antes das ocorrências
-        if horarios:
-            dados[data].extend(horarios)
-
-    return dados
-
 if uploaded_file:
     with st.spinner("🔄 Convertendo, aguarde..."):
         with pdfplumber.open(uploaded_file) as pdf:
-            texto = "\n".join(page.extract_text() or "" for page in pdf.pages)
+            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
 
-        dados = extrair_marcacoes_por_linha(texto)
+        linhas = [linha.strip() for linha in text.split("\n") if linha.strip()]
+
+        padrao_data = re.compile(r"\d{2}/\d{2}/\d{4}")
+        padrao_hora = re.compile(r"\b\d{2}:\d{2}g?\b")
+
+        dados = {}
+
+        for linha in linhas:
+            partes = linha.split()
+            datas = [p for p in partes if padrao_data.fullmatch(p)]
+            if not datas:
+                continue
+            data_str = datas[0]
+            try:
+                data = datetime.strptime(data_str, "%d/%m/%Y").date()
+            except:
+                continue
+
+            if data not in dados:
+                dados[data] = []
+
+            # Encontrar os blocos após a data
+            pos_data = linha.find(data_str)
+            depois_data = linha[pos_data + len(data_str):]
+
+            # Separar por colunas tabulares (2+ espaços consecutivos)
+            colunas = re.split(r"\s{2,}", depois_data)
+            marcacoes = []
+
+            for col in colunas[:2]:  # Considera apenas as duas primeiras colunas (marcações)
+                horas = padrao_hora.findall(col)
+                marcacoes.extend(horas)
+
+            dados[data].extend(marcacoes)
 
         if dados:
             inicio = min(dados)

@@ -1,44 +1,45 @@
 import streamlit as st
 import pdfplumber
-import re
 import pandas as pd
+import re
 
 st.set_page_config(page_title="EXTRATOR DE CARTÃO DE PONTO", layout="centered")
 st.title("🕒 EXTRATOR DE CARTÃO DE PONTO")
 
-uploaded_file = st.file_uploader("\n📥 Envie o arquivo PDF do cartão de ponto", type=["pdf"])
+uploaded_file = st.file_uploader("\n\U0001F4E5 Envie o arquivo PDF do cartão de ponto", type=["pdf"])
 
-def extrair_horarios(texto):
-    return [re.sub(r'[a-zA-Z]$', '', h) for h in re.findall(r'\d{2}:\d{2}[a-zA-Z]?', texto)]
+def limpar_horarios(texto):
+    horarios = re.findall(r"\d{2}:\d{2}[a-zA-Z]?", texto)
+    return [h[:5] for h in horarios]  # remove sufixos
 
-def processar_pdf(pdf):
+def processar_pdf_cartao(pdf):
     dados = []
-    dias_presentes = set()
+    dias_processados = set()
 
     with pdfplumber.open(pdf) as pdf:
         for pagina in pdf.pages:
-            texto = pagina.extract_text()
-            if not texto:
-                continue
-            linhas = texto.split("\n")
-
+            linhas = pagina.extract_text().split('\n')
             for linha in linhas:
-                partes = linha.strip().split()
+                partes = linha.split()
                 if len(partes) < 2:
                     continue
-                if re.fullmatch(r'\d{1,2}', partes[0]):
-                    dia = partes[0].zfill(2)
-                    linha_marcacoes = ' '.join(partes[1:])
-                    if 'OCORR' in linha_marcacoes.upper():
-                        linha_marcacoes = linha_marcacoes.split('OCORR')[0]
-                    horarios = extrair_horarios(linha_marcacoes)
-                    linha_csv = [dia] + horarios + [''] * (12 - len(horarios))
-                    dados.append(linha_csv)
-                    dias_presentes.add(dia)
+                if re.match(r"\d{2}/\d{2}/\d{4}", partes[0]):
+                    dia = partes[0][:2]  # extrai apenas o dia
+                    if dia in dias_processados:
+                        continue
+                    dias_processados.add(dia)
+
+                    match = re.search(r"(\d{2}:\d{2}[a-zA-Z]? ?)+", linha)
+                    if match:
+                        horarios = limpar_horarios(match.group())
+                    else:
+                        horarios = []
+                    linha_final = [dia] + horarios + [''] * (12 - len(horarios))
+                    dados.append(linha_final)
 
     for dia in range(1, 32):
         d = str(dia).zfill(2)
-        if d not in dias_presentes:
+        if d not in dias_processados:
             dados.append([d] + [''] * 12)
 
     dados.sort(key=lambda x: int(x[0]))
@@ -47,9 +48,9 @@ def processar_pdf(pdf):
     return df
 
 if uploaded_file:
-    df = processar_pdf(uploaded_file)
-    st.success("✅ Processamento concluído com sucesso!")
-    st.subheader("📄 Tabela Extraída:")
+    df = processar_pdf_cartao(uploaded_file)
+    st.success("\u2705 Processamento concluído com sucesso!")
+    st.subheader("\ud83d\udcc4 Tabela Extraída:")
     st.dataframe(df, use_container_width=True)
 
     csv = df.to_csv(index=False).encode('utf-8')

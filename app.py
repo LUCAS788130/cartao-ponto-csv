@@ -1,78 +1,56 @@
 import streamlit as st
-import pytesseract
-from PIL import Image
 import pdfplumber
-import fitz  # PyMuPDF
-import io
 import re
-import csv
-import os
+import pandas as pd
 
 st.set_page_config(page_title="EXTRATOR DE CARTÃO DE PONTO", layout="centered")
-st.markdown("<h2 style='text-align: center;'>EXTRATOR DE CARTÃO DE PONTO COM OCR</h2>", unsafe_allow_html=True)
-st.markdown("---")
+st.title("🕒 EXTRATOR DE CARTÃO DE PONTO")
 
-uploaded_file = st.file_uploader("📎 Envie o PDF do cartão de ponto (texto ou escaneado)", type=["pdf"])
+uploaded_file = st.file_uploader("\n📥 Envie o arquivo PDF do cartão de ponto", type=["pdf"])
 
-def extrair_texto_ocr(pdf_file):
-    texto_total = ""
-    doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
-    for page in doc:
-        pix = page.get_pixmap(dpi=300)
-        img = Image.open(io.BytesIO(pix.tobytes()))
-        texto = pytesseract.image_to_string(img, lang='por')
-        texto_total += texto + "\n"
-    return texto_total
+def extrair_horarios(texto):
+    return [re.sub(r'[a-zA-Z]$', '', h) for h in re.findall(r'\d{2}:\d{2}[a-zA-Z]?', texto)]
 
-def extrair_horarios(linha_marcacoes):
-    return [re.sub(r'[a-zA-Z]$', '', h) for h in re.findall(r'\d{2}:\d{2}[a-zA-Z]?', linha_marcacoes)]
-
-def processar_texto_para_csv(texto_ocr):
-    linhas = texto_ocr.split("\n")
+def processar_pdf(pdf):
     dados = []
+    dias_presentes = set()
 
-    for linha in linhas:
-        partes = linha.strip().split()
-        if len(partes) < 2:
-            continue
-        if re.fullmatch(r'\d{1,2}', partes[0]):
-            dia = partes[0].zfill(2)
-            linha_marcacoes = ' '.join(partes[1:])
-            if 'OCORRÊNCIA' in linha_marcacoes.upper():
-                linha_marcacoes = linha_marcacoes.split('OCORRÊNCIA')[0]
-            horarios = extrair_horarios(linha_marcacoes)
-            linha_csv = [dia] + horarios + [''] * (12 - len(horarios))
-            dados.append(linha_csv)
+    with pdfplumber.open(pdf) as pdf:
+        for pagina in pdf.pages:
+            texto = pagina.extract_text()
+            if not texto:
+                continue
+            linhas = texto.split("\n")
 
-    dias_presentes = {linha[0] for linha in dados}
+            for linha in linhas:
+                partes = linha.strip().split()
+                if len(partes) < 2:
+                    continue
+                if re.fullmatch(r'\d{1,2}', partes[0]):
+                    dia = partes[0].zfill(2)
+                    linha_marcacoes = ' '.join(partes[1:])
+                    if 'OCORR' in linha_marcacoes.upper():
+                        linha_marcacoes = linha_marcacoes.split('OCORR')[0]
+                    horarios = extrair_horarios(linha_marcacoes)
+                    linha_csv = [dia] + horarios + [''] * (12 - len(horarios))
+                    dados.append(linha_csv)
+                    dias_presentes.add(dia)
+
     for dia in range(1, 32):
-        dia_str = str(dia).zfill(2)
-        if dia_str not in dias_presentes:
-            dados.append([dia_str] + [''] * 12)
+        d = str(dia).zfill(2)
+        if d not in dias_presentes:
+            dados.append([d] + [''] * 12)
 
     dados.sort(key=lambda x: int(x[0]))
-    cabecalho = ['Dia'] + [f'Entrada{i}' if i % 2 != 0 else f'Saída{i//2}' for i in range(1, 13)]
-    return cabecalho, dados
+    colunas = ['Dia'] + [f'Entrada{i}' if i % 2 != 0 else f'Saída{i//2}' for i in range(1, 13)]
+    df = pd.DataFrame(dados, columns=colunas)
+    return df
 
 if uploaded_file:
-    with st.spinner("🔎 Extraindo dados com OCR..."):
-        try:
-            texto_ocr = extrair_texto_ocr(uploaded_file)
-            cabecalho, dados = processar_texto_para_csv(texto_ocr)
-            st.success("✅ Processamento concluído com sucesso!")
+    df = processar_pdf(uploaded_file)
+    st.success("✅ Processamento concluído com sucesso!")
+    st.subheader("📄 Tabela Extraída:")
+    st.dataframe(df, use_container_width=True)
 
-            st.markdown("### 📋 Tabela Extraída:")
-            st.dataframe([dict(zip(cabecalho, linha)) for linha in dados])
-
-            output_path = "/tmp/saida_ocr.csv"
-            with open(output_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                writer.writerow(cabecalho)
-                writer.writerows(dados)
-
-            with open(output_path, "rb") as f:
-                st.download_button("⬇️ Baixar CSV", f, file_name="cartao_ponto_extraido.csv", mime="text/csv")
-
-        except Exception as e:
-            st.error(f"❌ Erro ao processar o PDF: {e}")
-
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button("⬇️ Baixar CSV", data=csv, file_name="cartao_ponto.csv", mime="text/csv")

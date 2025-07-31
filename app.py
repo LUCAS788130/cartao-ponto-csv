@@ -1,80 +1,60 @@
-import streamlit as st
 import pdfplumber
-import pandas as pd
-from datetime import datetime, timedelta
+import csv
+import re
 
-st.set_page_config(page_title="CONVERSOR DE CARTÃO DE PONTO ➜ CSV")
-st.markdown("<h1 style='text-align: center;'>📅 CONVERSOR DE CARTÃO DE PONTO ➜ CSV</h1>", unsafe_allow_html=True)
+def extrair_horarios(linha_marcacoes):
+    # Encontra todos os horários com ou sem sufixo (ex: 06:00c, 12:31e)
+    return [re.sub(r'[a-zA-Z]$', '', h) for h in re.findall(r'\d{2}:\d{2}[a-zA-Z]?', linha_marcacoes)]
 
-uploaded_file = st.file_uploader("Envie seu PDF de cartão de ponto", type="pdf")
-if uploaded_file:
-    with st.spinner("⏳ Processando seu cartão de ponto... Isso pode levar alguns segundos..."):
-        with pdfplumber.open(uploaded_file) as pdf:
-            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+def processar_cartao_ponto(pdf_path, csv_path):
+    with pdfplumber.open(pdf_path) as pdf:
+        dados = []
 
-        linhas = [linha.strip() for linha in text.split("\n") if linha.strip()]
-        registros = {}
+        for pagina in pdf.pages:
+            linhas = pagina.extract_text().split('\n')
 
-        def eh_horario(p):
-            return ":" in p and len(p) == 5 and p.replace(":", "").isdigit()
+            for linha in linhas:
+                partes = linha.strip().split()
+                if len(partes) < 2:
+                    continue
 
-        for ln in linhas:
-            partes = ln.split()
-            if len(partes) >= 2 and "/" in partes[0]:
-                try:
-                    data = datetime.strptime(partes[0], "%d/%m/%Y").date()
-                    pos_dia = partes[2:]
+                # Tenta identificar se a linha começa com número de dia
+                if re.fullmatch(r'\d{1,2}', partes[0]):
+                    dia = partes[0].zfill(2)
+                    # Junta tudo exceto o dia para extrair horários
+                    linha_marcacoes = ' '.join(partes[1:])
 
-                    tem_ocorrencia = any(not eh_horario(p) for p in pos_dia)
-                    horarios = [p for p in pos_dia if eh_horario(p)]
+                    # Ignora trecho após a palavra "Ocorrência" (se existir)
+                    if 'OCORRÊNCIA' in linha_marcacoes.upper():
+                        linha_marcacoes = linha_marcacoes.split('OCORRÊNCIA')[0]
 
-                    registros[data] = [] if tem_ocorrencia else horarios
-                except:
-                    pass
+                    horarios = extrair_horarios(linha_marcacoes)
 
-        if registros:
-            inicio = min(registros.keys())
-            fim = max(registros.keys())
+                    # Preenche até 6 pares de entrada/saída (12 colunas)
+                    linha_csv = [dia]
+                    linha_csv += horarios + [''] * (12 - len(horarios))
+                    dados.append(linha_csv)
 
-            dias_corridos = [inicio + timedelta(days=i) for i in range((fim - inicio).days + 1)]
-            tabela = []
+        # Garantir que todos os dias do mês estejam presentes (1 a 31)
+        dias_presentes = {linha[0] for linha in dados}
+        for dia in range(1, 32):
+            dia_str = str(dia).zfill(2)
+            if dia_str not in dias_presentes:
+                dados.append([dia_str] + [''] * 12)
 
-            for dia in dias_corridos:
-                linha = {"Data": dia.strftime("%d/%m/%Y")}
-                horarios = registros.get(dia, [])
+        # Ordenar os dados pelo dia
+        dados.sort(key=lambda x: int(x[0]))
 
-                for i in range(6):
-                    entrada = horarios[i * 2] if len(horarios) > i * 2 else ""
-                    saida = horarios[i * 2 + 1] if len(horarios) > i * 2 + 1 else ""
-                    linha[f"Entrada{i+1}"] = entrada
-                    linha[f"Saída{i+1}"] = saida
+        # Cabeçalho CSV
+        cabecalho = ['Dia']
+        for i in range(1, 7):
+            cabecalho += [f'Entrada{i}', f'Saída{i}']
 
-                tabela.append(linha)
+        # Salvar CSV
+        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(cabecalho)
+            writer.writerows(dados)
 
-            df = pd.DataFrame(tabela)
-            st.subheader("📋 Resultado:")
-            st.dataframe(df, use_container_width=True)
-
-            csv = df.to_csv(index=False).encode("utf-8")
-
-            st.markdown("<div style='font-size: 48px; text-align: center;'>🚀</div>", unsafe_allow_html=True)
-            st.success("✅ Conversão concluída com sucesso! Sua planilha está pronta para download.")
-
-            st.download_button(
-                label="⬇️ Baixar CSV",
-                data=csv,
-                file_name="cartao_convertido.csv",
-                mime="text/csv",
-            )
-        else:
-            st.warning("❌ Nenhum registro válido encontrado.")
-
-# Rodapé com LGPD e desenvolvedor
-st.markdown("""
-<hr>
-<p style='text-align: center; font-size: 13px;'>
-🔒 Este site está em conformidade com a <strong>Lei Geral de Proteção de Dados (LGPD)</strong>.<br>
-Os arquivos enviados são utilizados apenas para conversão e não são armazenados nem compartilhados.<br>
-👨‍💻 Desenvolvido por <strong>Lucas de Matos Coelho</strong>
-</p>
-""", unsafe_allow_html=True)
+# Exemplo de uso:
+# processar_cartao_ponto('Documento_e6b1f58.pdf', 'saida.csv')

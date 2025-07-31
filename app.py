@@ -1,57 +1,80 @@
 import streamlit as st
 import pdfplumber
 import pandas as pd
-import re
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="EXTRATOR DE CARTÃO DE PONTO", layout="centered")
-st.title("🕒 EXTRATOR DE CARTÃO DE PONTO")
+st.set_page_config(page_title="CONVERSOR DE CARTÃO DE PONTO ➜ CSV")
+st.markdown("<h1 style='text-align: center;'>📅 CONVERSOR DE CARTÃO DE PONTO ➜ CSV</h1>", unsafe_allow_html=True)
 
-uploaded_file = st.file_uploader("\n\U0001F4E5 Envie o arquivo PDF do cartão de ponto", type=["pdf"])
-
-def limpar_horarios(texto):
-    horarios = re.findall(r"\d{2}:\d{2}[a-zA-Z]?", texto)
-    return [h[:5] for h in horarios]  # remove sufixos
-
-def processar_pdf_cartao(pdf):
-    dados = []
-    dias_processados = set()
-
-    with pdfplumber.open(pdf) as pdf:
-        for pagina in pdf.pages:
-            linhas = pagina.extract_text().split('\n')
-            for linha in linhas:
-                partes = linha.split()
-                if len(partes) < 2:
-                    continue
-                if re.match(r"\d{2}/\d{2}/\d{4}", partes[0]):
-                    dia = partes[0][:2]  # extrai apenas o dia
-                    if dia in dias_processados:
-                        continue
-                    dias_processados.add(dia)
-
-                    match = re.search(r"(\d{2}:\d{2}[a-zA-Z]? ?)+", linha)
-                    if match:
-                        horarios = limpar_horarios(match.group())
-                    else:
-                        horarios = []
-                    linha_final = [dia] + horarios + [''] * (12 - len(horarios))
-                    dados.append(linha_final)
-
-    for dia in range(1, 32):
-        d = str(dia).zfill(2)
-        if d not in dias_processados:
-            dados.append([d] + [''] * 12)
-
-    dados.sort(key=lambda x: int(x[0]))
-    colunas = ['Dia'] + [f'Entrada{i}' if i % 2 != 0 else f'Saída{i//2}' for i in range(1, 13)]
-    df = pd.DataFrame(dados, columns=colunas)
-    return df
-
+uploaded_file = st.file_uploader("Envie seu PDF de cartão de ponto", type="pdf")
 if uploaded_file:
-    df = processar_pdf_cartao(uploaded_file)
-    st.success("\u2705 Processamento concluído com sucesso!")
-    st.subheader("\ud83d\udcc4 Tabela Extraída:")
-    st.dataframe(df, use_container_width=True)
+    with st.spinner("⏳ Processando seu cartão de ponto... Isso pode levar alguns segundos..."):
+        with pdfplumber.open(uploaded_file) as pdf:
+            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
 
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("⬇️ Baixar CSV", data=csv, file_name="cartao_ponto.csv", mime="text/csv")
+        linhas = [linha.strip() for linha in text.split("\n") if linha.strip()]
+        registros = {}
+
+        def eh_horario(p):
+            return ":" in p and len(p) == 5 and p.replace(":", "").isdigit()
+
+        for ln in linhas:
+            partes = ln.split()
+            if len(partes) >= 2 and "/" in partes[0]:
+                try:
+                    data = datetime.strptime(partes[0], "%d/%m/%Y").date()
+                    pos_dia = partes[2:]
+
+                    tem_ocorrencia = any(not eh_horario(p) for p in pos_dia)
+                    horarios = [p for p in pos_dia if eh_horario(p)]
+
+                    registros[data] = [] if tem_ocorrencia else horarios
+                except:
+                    pass
+
+        if registros:
+            inicio = min(registros.keys())
+            fim = max(registros.keys())
+
+            dias_corridos = [inicio + timedelta(days=i) for i in range((fim - inicio).days + 1)]
+            tabela = []
+
+            for dia in dias_corridos:
+                linha = {"Data": dia.strftime("%d/%m/%Y")}
+                horarios = registros.get(dia, [])
+
+                for i in range(6):
+                    entrada = horarios[i * 2] if len(horarios) > i * 2 else ""
+                    saida = horarios[i * 2 + 1] if len(horarios) > i * 2 + 1 else ""
+                    linha[f"Entrada{i+1}"] = entrada
+                    linha[f"Saída{i+1}"] = saida
+
+                tabela.append(linha)
+
+            df = pd.DataFrame(tabela)
+            st.subheader("📋 Resultado:")
+            st.dataframe(df, use_container_width=True)
+
+            csv = df.to_csv(index=False).encode("utf-8")
+
+            st.markdown("<div style='font-size: 48px; text-align: center;'>🚀</div>", unsafe_allow_html=True)
+            st.success("✅ Conversão concluída com sucesso! Sua planilha está pronta para download.")
+
+            st.download_button(
+                label="⬇️ Baixar CSV",
+                data=csv,
+                file_name="cartao_convertido.csv",
+                mime="text/csv",
+            )
+        else:
+            st.warning("❌ Nenhum registro válido encontrado.")
+
+# Rodapé com LGPD e desenvolvedor
+st.markdown("""
+<hr>
+<p style='text-align: center; font-size: 13px;'>
+🔒 Este site está em conformidade com a <strong>Lei Geral de Proteção de Dados (LGPD)</strong>.<br>
+Os arquivos enviados são utilizados apenas para conversão e não são armazenados nem compartilhados.<br>
+👨‍💻 Desenvolvido por <strong>Lucas de Matos Coelho</strong>
+</p>
+""", unsafe_allow_html=True)

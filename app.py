@@ -17,25 +17,30 @@ if uploaded_file:
         registros = {}
 
         def limpar_horario(p):
-            m = re.match(r'(\d{2}:\d{2})[a-zA-Z]?', p)
+            m = re.match(r'(\d{2}:\d{2})', p)
             return m.group(1) if m else None
 
-        def eh_horario(p):
-            return limpar_horario(p) is not None
+        def eh_data(s):
+            return re.match(r"\d{2}/\d{2}/\d{4}", s)
 
         for ln in linhas:
             partes = ln.split()
-            if len(partes) >= 2 and re.match(r"\d{2}/\d{2}/\d{4}", partes[0]):
+            if len(partes) >= 2 and eh_data(partes[0]):
                 try:
                     data = datetime.strptime(partes[0], "%d/%m/%Y").date()
-                    horarios_brutos = partes[1:]
-                    horarios_limpos = [limpar_horario(p) for p in horarios_brutos if eh_horario(p)]
 
-                    # Ignora se todos os campos depois da data forem palavras (ex: FERIADO, DSR, FALTAS...)
-                    if len(horarios_limpos) > 0:
-                        registros[data] = horarios_limpos
-                    else:
-                        registros[data] = []
+                    # Pega somente os valores antes da coluna Ocorrências, se existir
+                    if 'OCORR' in ln.upper():
+                        ln = ln.upper().split('OCORR')[0]
+                        partes = ln.split()
+
+                    horarios = []
+                    for p in partes[1:]:
+                        h = limpar_horario(p)
+                        if h:
+                            horarios.append(h)
+
+                    registros[data] = horarios
                 except:
                     pass
 

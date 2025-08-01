@@ -2,68 +2,68 @@ import streamlit as st
 import pdfplumber
 import pandas as pd
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 
 st.set_page_config(page_title="CONVERSOR DE CARTÃO DE PONTO ➜ CSV")
 st.markdown("<h1 style='text-align: center;'>📅 CONVERSOR DE CARTÃO DE PONTO ➜ CSV</h1>", unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader("Envie seu PDF de cartão de ponto", type="pdf")
-
-def limpar_horario(h):
-    h = h.strip()
-    return re.sub(r"[^\d:]", "", h)  # remove letras como "g", "r", etc.
-
 if uploaded_file:
-    with st.spinner("⏳ Processando seu cartão de ponto... Isso pode levar alguns segundos..."):
+    with st.spinner("⏳ Processando seu cartão de ponto..."):
         with pdfplumber.open(uploaded_file) as pdf:
-            texto = "\n".join(page.extract_text() or "" for page in pdf.pages)
+            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
 
-        linhas = texto.split("\n")
-        dados = {}
+        linhas = [linha for linha in text.split("\n") if re.match(r"\d{2}/\d{2}/\d{4}", linha)]
+        registros = []
 
         for linha in linhas:
             partes = linha.split()
-            if len(partes) >= 2 and re.match(r"\d{2}/\d{2}/\d{4}", partes[0]):
-                try:
-                    data = datetime.strptime(partes[0], "%d/%m/%Y").date()
-                    # Pega apenas a parte da linha ANTES de "OCORR"
-                    if "OCORR" in [p.upper() for p in partes]:
-                        idx = [p.upper() for p in partes].index("OCORR")
-                        partes = partes[:idx]
-                    # Ignora data e dia da semana (ex: "Seg-Norm")
-                    horarios = [limpar_horario(p) for p in partes[2:] if re.match(r"\d{2}:\d{2}", p)]
-                    dados[data] = horarios
-                except:
-                    continue
+            data_str = partes[0]
 
-        if not dados:
-            st.warning("⚠️ Nenhum dado válido encontrado no PDF.")
-        else:
-            # Garante dias consecutivos mesmo que estejam faltando
-            data_inicio = min(dados.keys())
-            data_fim = max(dados.keys())
-            dias = [data_inicio + timedelta(days=i) for i in range((data_fim - data_inicio).days + 1)]
+            try:
+                data = datetime.strptime(data_str, "%d/%m/%Y").strftime("%d/%m/%Y")
+            except ValueError:
+                continue
 
-            registros = []
-            for dia in dias:
-                linha = {"Dia": dia.strftime("%d")}
-                horarios = dados.get(dia, [])
-                for i in range(6):
-                    entrada = horarios[i * 2] if len(horarios) > i * 2 else ""
-                    saida = horarios[i * 2 + 1] if len(horarios) > i * 2 + 1 else ""
-                    linha[f"Entrada{i+1}"] = entrada
-                    linha[f"Saída{i+1}"] = saida
-                registros.append(linha)
+            # Pega somente a parte das marcações (entre a data e a coluna Ocorrências)
+            try:
+                idx_marcacoes = partes.index("Ocorrências")
+                marcacoes = partes[1:idx_marcacoes]
+            except ValueError:
+                # Caso "Ocorrências" não esteja presente, pega até onde começam blocos como 08:00d etc
+                marcacoes = []
+                for p in partes[1:]:
+                    if re.match(r"\d{2}:\d{2}", p):
+                        marcacoes.append(p)
+                    elif re.search(r"\d{2}:\d{2}", p):
+                        marcacoes.append(re.search(r"\d{2}:\d{2}", p).group())
+                    else:
+                        break
 
+            # Remove letras (como 08:00d → 08:00)
+            horarios_limpos = [re.sub(r"[^\d:]", "", h) for h in marcacoes if re.match(r"\d{2}:\d{2}", h)]
+
+            linha = {
+                "Data": data,
+                "Entrada1": horarios_limpos[0] if len(horarios_limpos) > 0 else "",
+                "Saída1":   horarios_limpos[1] if len(horarios_limpos) > 1 else "",
+                "Entrada2": horarios_limpos[2] if len(horarios_limpos) > 2 else "",
+                "Saída2":   horarios_limpos[3] if len(horarios_limpos) > 3 else "",
+            }
+            registros.append(linha)
+
+        if registros:
             df = pd.DataFrame(registros)
             st.subheader("📋 Tabela Extraída:")
             st.dataframe(df, use_container_width=True)
 
             csv = df.to_csv(index=False).encode("utf-8")
             st.success("✅ Processamento concluído com sucesso!")
-            st.download_button("📥 Baixar CSV", data=csv, file_name="cartao_convertido.csv", mime="text/csv")
+            st.download_button("⬇️ Baixar CSV", csv, "cartao_convertido.csv", "text/csv")
+        else:
+            st.warning("⚠️ Nenhum dado de marcação foi encontrado.")
 
-# Rodapé com LGPD
+# Rodapé
 st.markdown("""
 <hr>
 <p style='text-align: center; font-size: 13px;'>

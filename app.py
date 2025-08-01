@@ -2,43 +2,35 @@ import streamlit as st
 import pdfplumber
 import pandas as pd
 from datetime import datetime, timedelta
-import re
 
-st.set_page_config(page_title="CONVERSOR DE CARTÃO DE PONTO ➔ CSV")
-st.markdown("<h1 style='text-align: center;'>🗕️ CONVERSOR DE CARTÃO DE PONTO ➔ CSV</h1>", unsafe_allow_html=True)
+st.set_page_config(page_title="CONVERSOR DE CARTÃO DE PONTO ➜ CSV")
+st.markdown("<h1 style='text-align: center;'>📅 CONVERSOR DE CARTÃO DE PONTO ➜ CSV</h1>", unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader("Envie seu PDF de cartão de ponto", type="pdf")
 if uploaded_file:
     with st.spinner("⏳ Processando seu cartão de ponto... Isso pode levar alguns segundos..."):
         with pdfplumber.open(uploaded_file) as pdf:
-            linhas = []
-            for page in pdf.pages:
-                try:
-                    table = page.extract_table()
-                    if table:
-                        linhas.extend(table)
-                except:
-                    continue
+            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
 
+        linhas = [linha.strip() for linha in text.split("\n") if linha.strip()]
         registros = {}
 
-        def limpar_horario(p):
-            m = re.match(r'(\d{2}:\d{2})', p)
-            return m.group(1) if m else None
+        def eh_horario(p):
+            return ":" in p and len(p) == 5 and p.replace(":", "").isdigit()
 
-        for linha in linhas:
-            if not linha or len(linha) < 2:
-                continue
-            data_raw = linha[0].strip()
-            marcacoes_raw = linha[1].strip() if len(linha) > 1 else ""
-
-            if re.match(r"\d{2}/\d{2}/\d{4}", data_raw):
+        for ln in linhas:
+            partes = ln.split()
+            if len(partes) >= 2 and "/" in partes[0]:
                 try:
-                    data = datetime.strptime(data_raw, "%d/%m/%Y").date()
-                    horarios = [limpar_horario(p) for p in marcacoes_raw.split() if limpar_horario(p)]
-                    registros[data] = horarios
+                    data = datetime.strptime(partes[0], "%d/%m/%Y").date()
+                    pos_dia = partes[2:]
+
+                    tem_ocorrencia = any(not eh_horario(p) for p in pos_dia)
+                    horarios = [p for p in pos_dia if eh_horario(p)]
+
+                    registros[data] = [] if tem_ocorrencia else horarios
                 except:
-                    continue
+                    pass
 
         if registros:
             inicio = min(registros.keys())
@@ -60,7 +52,7 @@ if uploaded_file:
                 tabela.append(linha)
 
             df = pd.DataFrame(tabela)
-            st.subheader("Resultado:")
+            st.subheader("📋 Resultado:")
             st.dataframe(df, use_container_width=True)
 
             csv = df.to_csv(index=False).encode("utf-8")

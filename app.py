@@ -11,38 +11,34 @@ uploaded_file = st.file_uploader("Envie seu PDF de cartão de ponto", type="pdf"
 if uploaded_file:
     with st.spinner("⏳ Processando seu cartão de ponto... Isso pode levar alguns segundos..."):
         with pdfplumber.open(uploaded_file) as pdf:
-            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+            linhas = []
+            for page in pdf.pages:
+                try:
+                    table = page.extract_table()
+                    if table:
+                        linhas.extend(table)
+                except:
+                    continue
 
-        linhas = [linha.strip() for linha in text.split("\n") if linha.strip()]
         registros = {}
 
         def limpar_horario(p):
             m = re.match(r'(\d{2}:\d{2})', p)
             return m.group(1) if m else None
 
-        def eh_data(s):
-            return re.match(r"\d{2}/\d{2}/\d{4}", s)
+        for linha in linhas:
+            if not linha or len(linha) < 2:
+                continue
+            data_raw = linha[0].strip()
+            marcacoes_raw = linha[1].strip() if len(linha) > 1 else ""
 
-        for ln in linhas:
-            partes = ln.split()
-            if len(partes) >= 2 and eh_data(partes[0]):
+            if re.match(r"\d{2}/\d{2}/\d{4}", data_raw):
                 try:
-                    data = datetime.strptime(partes[0], "%d/%m/%Y").date()
-
-                    # Pega somente os valores antes da coluna Ocorrências, se existir
-                    if 'OCORR' in ln.upper():
-                        ln = ln.upper().split('OCORR')[0]
-                        partes = ln.split()
-
-                    horarios = []
-                    for p in partes[1:]:
-                        h = limpar_horario(p)
-                        if h:
-                            horarios.append(h)
-
+                    data = datetime.strptime(data_raw, "%d/%m/%Y").date()
+                    horarios = [limpar_horario(p) for p in marcacoes_raw.split() if limpar_horario(p)]
                     registros[data] = horarios
                 except:
-                    pass
+                    continue
 
         if registros:
             inicio = min(registros.keys())

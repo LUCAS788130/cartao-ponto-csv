@@ -13,6 +13,9 @@ if uploaded_file:
             text = "\n".join(page.extract_text() or "" for page in pdf.pages)
 
         linhas = [linha.strip() for linha in text.split("\n") if linha.strip()]
+        
+        st.write("Exemplo das linhas extraídas:", linhas[:30])  # Debug - veja as primeiras linhas no app
+
         registros = {}
 
         def eh_horario(p):
@@ -20,15 +23,19 @@ if uploaded_file:
 
         for ln in linhas:
             partes = ln.split()
+            # Tentar achar data completa dd/mm/yyyy
             if len(partes) >= 2 and "/" in partes[0]:
                 try:
                     data = datetime.strptime(partes[0], "%d/%m/%Y").date()
-                    pos_dia = partes[2:]
+                    pos_dia = partes[1:]  # considera tudo depois da data
 
-                    tem_ocorrencia = any(not eh_horario(p) for p in pos_dia)
+                    # Filtra só os horários válidos (ignora textos e ocorrências)
                     horarios = [p for p in pos_dia if eh_horario(p)]
+                    tem_ocorrencia = any(not eh_horario(p) for p in pos_dia)
 
-                    registros[data] = [] if tem_ocorrencia else horarios
+                    # Guarda só se não tiver ocorrência (ou adapte conforme seu critério)
+                    if not tem_ocorrencia and horarios:
+                        registros[data] = horarios
                 except:
                     pass
 
@@ -43,7 +50,8 @@ if uploaded_file:
                 linha = {"Data": dia.strftime("%d/%m/%Y")}
                 horarios = registros.get(dia, [])
 
-                for i in range(6):
+                # Só 2 pares entrada/saida
+                for i in range(2):
                     entrada = horarios[i * 2] if len(horarios) > i * 2 else ""
                     saida = horarios[i * 2 + 1] if len(horarios) > i * 2 + 1 else ""
                     linha[f"Entrada{i+1}"] = entrada

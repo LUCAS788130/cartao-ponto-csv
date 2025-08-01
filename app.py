@@ -2,9 +2,10 @@ import streamlit as st
 import pdfplumber
 import pandas as pd
 from datetime import datetime, timedelta
+import re
 
-st.set_page_config(page_title="CONVERSOR DE CARTÃO DE PONTO ➜ CSV")
-st.markdown("<h1 style='text-align: center;'>📅 CONVERSOR DE CARTÃO DE PONTO ➜ CSV</h1>", unsafe_allow_html=True)
+st.set_page_config(page_title="CONVERSOR DE CARTÃO DE PONTO ➔ CSV")
+st.markdown("<h1 style='text-align: center;'>🗕️ CONVERSOR DE CARTÃO DE PONTO ➔ CSV</h1>", unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader("Envie seu PDF de cartão de ponto", type="pdf")
 if uploaded_file:
@@ -15,20 +16,26 @@ if uploaded_file:
         linhas = [linha.strip() for linha in text.split("\n") if linha.strip()]
         registros = {}
 
+        def limpar_horario(p):
+            m = re.match(r'(\d{2}:\d{2})[a-zA-Z]?', p)
+            return m.group(1) if m else None
+
         def eh_horario(p):
-            return ":" in p and len(p) == 5 and p.replace(":", "").isdigit()
+            return limpar_horario(p) is not None
 
         for ln in linhas:
             partes = ln.split()
-            if len(partes) >= 2 and "/" in partes[0]:
+            if len(partes) >= 2 and re.match(r"\d{2}/\d{2}/\d{4}", partes[0]):
                 try:
                     data = datetime.strptime(partes[0], "%d/%m/%Y").date()
-                    pos_dia = partes[2:]
+                    horarios_brutos = partes[1:]
+                    horarios_limpos = [limpar_horario(p) for p in horarios_brutos if eh_horario(p)]
 
-                    tem_ocorrencia = any(not eh_horario(p) for p in pos_dia)
-                    horarios = [p for p in pos_dia if eh_horario(p)]
-
-                    registros[data] = [] if tem_ocorrencia else horarios
+                    # Ignora se todos os campos depois da data forem palavras (ex: FERIADO, DSR, FALTAS...)
+                    if len(horarios_limpos) > 0:
+                        registros[data] = horarios_limpos
+                    else:
+                        registros[data] = []
                 except:
                     pass
 
@@ -52,7 +59,7 @@ if uploaded_file:
                 tabela.append(linha)
 
             df = pd.DataFrame(tabela)
-            st.subheader("📋 Resultado:")
+            st.subheader("Resultado:")
             st.dataframe(df, use_container_width=True)
 
             csv = df.to_csv(index=False).encode("utf-8")

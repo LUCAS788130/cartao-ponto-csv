@@ -17,9 +17,15 @@ def extrair_datas_e_marcacoes(texto):
         match = re.match(r"(\d{2}/\d{2}/\d{4})", linha)
         if match:
             data_str = match.group(1)
-            horarios = re.findall(r"\d{2}:\d{2}[a-z]?", linha)
+
+            # Dividimos em partes antes e depois das ocorrências (HORA EXTRA, D.S.R., FALTA, etc)
+            partes = re.split(r"\s+(HORA|D\.S\.R|FALTA|FERIADO|ATESTADO|DISPENSA|SA[IÍ]DA|ATRASO)", linha)
+            parte_marcacoes = partes[0]  # tudo antes das ocorrências
+
+            horarios = re.findall(r"\d{2}:\d{2}[a-z]?", parte_marcacoes)
             horarios = [h.replace('r', '').replace('g', '').replace('c', '') for h in horarios]
             horarios = [h for h in horarios if re.match(r"\d{2}:\d{2}", h)]
+
             registros.append((data_str, horarios))
 
     return registros
@@ -34,10 +40,13 @@ def gerar_datas_completas(inicio, fim):
 
 def organizar_jornada(registros):
     df = pd.DataFrame(registros, columns=["Data", "Horários"])
+    df["Data"] = pd.to_datetime(df["Data"], dayfirst=True)
 
-    data_inicio = datetime.strptime(df["Data"].iloc[0], "%d/%m/%Y")
-    data_fim = datetime.strptime(df["Data"].iloc[-1], "%d/%m/%Y")
+    data_inicio = df["Data"].min()
+    data_fim = df["Data"].max()
     todas_datas = gerar_datas_completas(data_inicio, data_fim)
+
+    registros_dict = {data.strftime("%d/%m/%Y"): horarios for data, horarios in zip(df["Data"], df["Horários"])}
 
     estrutura = {
         "Data": [],
@@ -45,17 +54,15 @@ def organizar_jornada(registros):
         "Entrada2": [], "Saída2": []
     }
 
-    registros_dict = dict(registros)
-
     for data in todas_datas:
         estrutura["Data"].append(data)
         horarios = registros_dict.get(data, [])
 
-        pares = horarios[:4] + [''] * (4 - len(horarios))  # Garante 4 colunas
-        estrutura["Entrada1"].append(pares[0] if len(pares) > 0 else '')
-        estrutura["Saída1"].append(pares[1] if len(pares) > 1 else '')
-        estrutura["Entrada2"].append(pares[2] if len(pares) > 2 else '')
-        estrutura["Saída2"].append(pares[3] if len(pares) > 3 else '')
+        pares = horarios[:4] + [''] * (4 - len(horarios))  # até 4 horários
+        estrutura["Entrada1"].append(pares[0])
+        estrutura["Saída1"].append(pares[1])
+        estrutura["Entrada2"].append(pares[2])
+        estrutura["Saída2"].append(pares[3])
 
     return pd.DataFrame(estrutura)
 

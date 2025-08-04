@@ -75,7 +75,7 @@ def processar_layout_novo(texto):
             data_str = match.group(1)
             linha_upper = linha.upper()
             tem_ocorrencia = any(palavra in linha_upper for palavra in [
-                "D.S.R", "FERIADO", "FALTA", "ATESTADO", "DISPENSA", "SAÍDA", "FERIAS", "ATRASO", "SUSPENSÃO", "COMPENSA DIA", "ATESTADO MÉDICO", "FOLGA COMPENSATÓRIA", "INTEGRAÇÃO"
+                "D.S.R", "FERIADO", "FALTA", "ATESTADO", "DISPENSA", "SAÍDA", "FERIAS", "ATRASO", "SUSPENSÃO", "COMPENSA DIA", "DESLIGAMENTO", "ATESTADO MÉDICO", "FOLGA COMPENSATÓRIA", "INTEGRAÇÃO"
             ])
 
             if tem_ocorrencia:

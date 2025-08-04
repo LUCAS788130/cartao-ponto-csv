@@ -15,7 +15,7 @@ def detectar_layout(texto):
     for linha in linhas:
         if re.match(r"\d{2}/\d{2}/\d{4}", linha):
             partes = linha.split()
-            if len(partes) >= 5 and any(o in linha.upper() for o in ["FERIADO", "D.S.R", "INTEGRAÇÃO", "FALTA"]):
+            if len(partes) >= 5 and any(o in linha.upper() for o in ["FERIADO", "D.S.R", "INTEGRAÇÃO", "FALTA", "LICENÇA REMUNERADA - D"]):
                 return "novo"  # layout com colunas e ocorrências
     return "antigo"
 

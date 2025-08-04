@@ -18,18 +18,18 @@ def extrair_datas_e_marcacoes(texto):
         if match:
             data_str = match.group(1)
 
-            # Identifica se é linha com ocorrências que anulam a jornada
+            # Verifica se há alguma ocorrência que zera a jornada
             linha_upper = linha.upper()
             tem_ocorrencia = any(palavra in linha_upper for palavra in [
-                "D.S.R", "FERIADO", "FALTA", "ATESTADO", "DISPENSA", "SAÍDA", "ATRASO"
+                "D.S.R", "FERIADO", "FALTA", "ATESTADO", "DISPENSA", "SAÍDA", "ATRASO", "INTEGRAÇÃO"
             ])
 
             if tem_ocorrencia:
-                registros.append((data_str, []))  # Zera horários
+                registros.append((data_str, []))  # Dia com ocorrência → horários em branco
                 continue
 
-            # Senão, extrai os horários normais (antes da parte de ocorrência)
-            partes = re.split(r"\s+(HORA|D\.S\.R|FALTA|FERIADO|ATESTADO|DISPENSA|SA[IÍ]DA|ATRASO)", linha)
+            # Extrai os horários válidos da jornada (antes das ocorrências)
+            partes = re.split(r"\s+(HORA|D\.S\.R|FALTA|FERIADO|ATESTADO|DISPENSA|SA[IÍ]DA|ATRASO|INTEGRAÇÃO)", linha)
             parte_marcacoes = partes[0]
 
             horarios = re.findall(r"\d{2}:\d{2}[a-z]?", parte_marcacoes)

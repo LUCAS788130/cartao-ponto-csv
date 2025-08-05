@@ -9,17 +9,15 @@ st.markdown("<h1 style='text-align: center;'>🕒 CONVERSOR DE CARTÃO DE PONTO<
 
 uploaded_file = st.file_uploader("📎 Envie o cartão de ponto em PDF", type="pdf")
 
-# Verifica se linha contém muitos elementos separados e colunas típicas
 def detectar_layout(texto):
     linhas = texto.split("\n")
     for linha in linhas:
         if re.match(r"\d{2}/\d{2}/\d{4}", linha):
             partes = linha.split()
-            if len(partes) >= 5 and any(o in linha.upper() for o in ["FERIADO", "D.S.R", "INTEGRAÇÃO", "FALTA", "LICENÇA REMUNERADA - D"]):
-                return "novo"  # layout com colunas e ocorrências
+            if len(partes) >= 5 and any(o in linha.upper() for o in ["FERIADO", "D.S.R", "INTEGRAÇÃO", "FALTA", "FÉRIAS"]):
+                return "novo"
     return "antigo"
 
-# PROCESSADOR DO LAYOUT ANTIGO
 def processar_layout_antigo(texto):
     linhas = [linha.strip() for linha in texto.split("\n") if linha.strip()]
     registros = {}
@@ -64,7 +62,6 @@ def processar_layout_antigo(texto):
 
     return pd.DataFrame()
 
-# PROCESSADOR DO LAYOUT NOVO
 def processar_layout_novo(texto):
     linhas = texto.split("\n")
     registros = []
@@ -74,20 +71,24 @@ def processar_layout_novo(texto):
         if match:
             data_str = match.group(1)
             linha_upper = linha.upper()
-            tem_ocorrencia = any(palavra in linha_upper for palavra in [
-                "D.S.R", "FERIADO", "FALTA", "ATESTADO", "DISPENSA", "SAÍDA", "FERIAS", "ATRASO", "SUSPENSÃO", "COMPENSA DIA", "DESLIGAMENTO", "ATESTADO MÉDICO", "FOLGA COMPENSATÓRIA", "INTEGRAÇÃO"
-            ])
 
-            if tem_ocorrencia:
-                registros.append((data_str, []))
-                continue
-
-            partes = re.split(r"\s+(HORA|D\.S\.R|FALTA|FERIADO|ATESTADO|DISPENSA|SA[IÍ]DA|ATRASO|INTEGRAÇÃO)", linha)
+            # Extrai somente a parte da linha até as colunas de ocorrência
+            partes = re.split(r"\s+(D\.S\.R|FERIADO|FALTA|ATESTADO|DISPENSA|SA[IÍ]DA|ATRASO|INTEGRAÇÃO|FÉRIAS)", linha_upper)
             parte_marcacoes = partes[0]
 
+            # Pega todos os horários válidos
             horarios = re.findall(r"\d{2}:\d{2}[a-z]?", parte_marcacoes)
             horarios = [h.replace('r', '').replace('g', '').replace('c', '') for h in horarios]
             horarios = [h for h in horarios if re.match(r"\d{2}:\d{2}", h)]
+
+            # Se não houver horários, verificar se tem alguma ocorrência que anula a jornada
+            if not horarios:
+                tem_ocorrencia = any(palavra in linha_upper for palavra in [
+                    "D.S.R", "FERIADO", "FALTA", "ATESTADO", "DISPENSA", "SAÍDA", "ATRASO", "INTEGRAÇÃO", "FÉRIAS"
+                ])
+                if tem_ocorrencia:
+                    registros.append((data_str, []))
+                    continue
 
             registros.append((data_str, horarios))
 
@@ -121,7 +122,6 @@ def processar_layout_novo(texto):
 
     return pd.DataFrame(estrutura)
 
-# EXECUÇÃO PRINCIPAL
 if uploaded_file:
     with st.spinner("⏳ Processando..."):
         with pdfplumber.open(uploaded_file) as pdf:
@@ -142,8 +142,8 @@ if uploaded_file:
             st.download_button("⬇️ Baixar CSV", data=csv, file_name="cartao_convertido.csv", mime="text/csv")
         else:
             st.warning("❌ Não foi possível extrair os dados do cartão.")
-    
-# Rodapé com LGPD
+
+# Rodapé
 st.markdown("""
 <hr>
 <p style='text-align: center; font-size: 13px;'>

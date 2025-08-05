@@ -64,7 +64,7 @@ def processar_layout_novo(texto):
     linhas = texto.split("\n")
     registros = []
 
-    # Ocorrências que anulam o dia (exceto saída antecipada)
+    # Ocorrências que anulam o dia (exceto saída antecipada e atraso)
     ocorrencias_que_zeram = [
         "D.S.R", "FERIADO", "FÉRIAS", "FALTA", "ATESTADO", "DISPENSA",
         "INTEGRAÇÃO", "LICENÇA REMUNERADA", "SUSPENSÃO", "DESLIGAMENTO",
@@ -77,23 +77,24 @@ def processar_layout_novo(texto):
             data_str = match.group(1)
             linha_upper = linha.upper()
 
-            # Se dia tem ocorrência que zera e NÃO tem SAÍDA ANTECIPADA, zera horários
-            if any(oc in linha_upper for oc in ocorrencias_que_zeram) and "SAÍDA ANTECIPADA" not in linha_upper:
+            # Zerar horários se ocorrência for irrelevante E não tiver "SAÍDA ANTECIPADA" ou "ATRASO"
+            if any(oc in linha_upper for oc in ocorrencias_que_zeram) and \
+                "SAÍDA ANTECIPADA" not in linha_upper and \
+                "ATRASO" not in linha_upper:
                 registros.append((data_str, []))
                 continue
 
-            # Extrair só até a coluna de marcações (antes das ocorrências)
-            corte_ocorrencias = r"\s+(HORA|D\.S\.R|FALTA|FERIADO|FÉRIAS|ATESTADO|DISPENSA|SAÍDA ANTECIPADA|INTEGRAÇÃO|SUSPENSÃO|DESLIGAMENTO|FOLGA|COMPENSA)"
+            # Cortar antes das ocorrências para evitar capturar texto de ocorrência como horário
+            corte_ocorrencias = r"\s+(HORA|D\.S\.R|FALTA|FERIADO|FÉRIAS|ATESTADO|DISPENSA|SAÍDA ANTECIPADA|INTEGRAÇÃO|SUSPENSÃO|DESLIGAMENTO|FOLGA|COMPENSA|ATRASO)"
             parte_marcacoes = re.split(corte_ocorrencias, linha_upper)[0]
 
-            # Extrai os horários da parte de marcações (ignora sufixos)
+            # Extrai horários válidos
             horarios = re.findall(r"\d{2}:\d{2}[a-z]?", parte_marcacoes)
             horarios = [h[:-1] if h[-1].isalpha() else h for h in horarios]
             horarios = [h for h in horarios if re.match(r"\d{2}:\d{2}", h)]
 
-            # Se tem saída antecipada, pega só Entrada1 e Saída1 (primeiros dois horários)
-            if "SAÍDA ANTECIPADA" in linha_upper:
-                horarios = horarios[:2]
+            # Limita a no máximo dois pares (quatro marcações)
+            horarios = horarios[:4]
 
             registros.append((data_str, horarios))
 
@@ -119,18 +120,11 @@ def processar_layout_novo(texto):
         estrutura["Data"].append(data)
         horarios = registros_dict.get(data, [])
 
-        # Se tem só 2 horários (saída antecipada), preencher só Entrada1 e Saída1
-        if len(horarios) == 2:
-            estrutura["Entrada1"].append(horarios[0])
-            estrutura["Saída1"].append(horarios[1])
-            estrutura["Entrada2"].append("")
-            estrutura["Saída2"].append("")
-        else:
-            pares = horarios[:4] + [''] * (4 - len(horarios))
-            estrutura["Entrada1"].append(pares[0])
-            estrutura["Saída1"].append(pares[1])
-            estrutura["Entrada2"].append(pares[2])
-            estrutura["Saída2"].append(pares[3])
+        pares = horarios + [""] * (4 - len(horarios))
+        estrutura["Entrada1"].append(pares[0])
+        estrutura["Saída1"].append(pares[1])
+        estrutura["Entrada2"].append(pares[2])
+        estrutura["Saída2"].append(pares[3])
 
     return pd.DataFrame(estrutura)
 

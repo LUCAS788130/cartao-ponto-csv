@@ -86,7 +86,7 @@ def processar_layout_novo(texto):
                 continue
 
             # Corta a linha antes da parte de ocorrências para evitar pegar horários indevidos
-            corte_ocorrencias = r"\s+(HORA|D\.S\.R|FALTA|FERIADO|FÉRIAS|ATESTADO|DISPENSA|SA[IÍ]DA|INTEGRAÇÃO|SUSPENSÃO|DESLIGAMENTO|FOLGA|COMPENSA)"
+            corte_ocorrencias = r"\s+(HORA|D\.S\.R|FALTA|FERIADO|FÉRIAS|ATESTADO|DISPENSA|SAíDA ANTECIPADA|INTEGRAÇÃO|SUSPENSÃO|DESLIGAMENTO|FOLGA|COMPENSA)"
             parte_marcacoes = re.split(corte_ocorrencias, linha_upper)[0]
 
             horarios = re.findall(r"\d{2}:\d{2}[a-z]?", parte_marcacoes)

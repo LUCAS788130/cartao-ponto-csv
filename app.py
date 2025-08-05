@@ -77,7 +77,7 @@ def processar_layout_novo(texto):
 
             # Ocorrências que ZERAM os horários:
             ocorrencias_que_zeram = [
-                "D.S.R", "FERIADO", "FÉRIAS", "FALTA", "ATESTADO", "DISPENSA", "SAÍDA",
+                "D.S.R", "FERIADO", "FÉRIAS", "FALTA", "ATESTADO", "DISPENSA",
                 "INTEGRAÇÃO", "LICENÇA REMUNERADA", "COMPENSA DIA", "SUSPENSÃO", "DESLIGAMENTO",
                 "FOLGA COMPENSATÓRIA", "ATESTADO MÉDICO"
             ]

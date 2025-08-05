@@ -64,7 +64,6 @@ def processar_layout_novo(texto):
     linhas = texto.split("\n")
     registros = []
 
-    # Ocorrências que anulam o dia (exceto saída antecipada e atraso)
     ocorrencias_que_zeram = [
         "D.S.R", "FERIADO", "FÉRIAS", "FALTA", "ATESTADO", "DISPENSA",
         "INTEGRAÇÃO", "LICENÇA REMUNERADA", "SUSPENSÃO", "DESLIGAMENTO",
@@ -77,25 +76,20 @@ def processar_layout_novo(texto):
             data_str = match.group(1)
             linha_upper = linha.upper()
 
-            # Se dia tem ocorrência que zera e NÃO tem SAÍDA ANTECIPADA nem ATRASO, zera horários
             if any(oc in linha_upper for oc in ocorrencias_que_zeram) and ("SAÍDA ANTECIPADA" not in linha_upper) and ("ATRASO" not in linha_upper):
                 registros.append((data_str, []))
                 continue
 
-            # Extrair só até a coluna de marcações (antes das ocorrências)
             corte_ocorrencias = r"\s+(HORA|D\.S\.R|FALTA|FERIADO|FÉRIAS|ATESTADO|DISPENSA|SAÍDA ANTECIPADA|ATRASO|INTEGRAÇÃO|SUSPENSÃO|DESLIGAMENTO|FOLGA|COMPENSA)"
             parte_marcacoes = re.split(corte_ocorrencias, linha_upper)[0]
 
-            # Extrai os horários da parte de marcações (ignora sufixos)
             horarios = re.findall(r"\d{2}:\d{2}[a-z]?", parte_marcacoes)
             horarios = [h[:-1] if h[-1].isalpha() else h for h in horarios]
             horarios = [h for h in horarios if re.match(r"\d{2}:\d{2}", h)]
 
-            # Se tem SAÍDA ANTECIPADA, pega só Entrada1 e Saída1 (2 horários)
             if "SAÍDA ANTECIPADA" in linha_upper:
                 horarios = horarios[:2]
 
-            # Se tem ATRASO, pode ter 1 ou 2 pares, pega todos os horários que existem (máximo 4)
             if "ATRASO" in linha_upper:
                 horarios = horarios[:4]
 
@@ -123,13 +117,9 @@ def processar_layout_novo(texto):
         estrutura["Data"].append(data)
         horarios = registros_dict.get(data, [])
 
-        # Monta a tabela conforme regras:
-        # - Se saída antecipada: só 2 horários
-        # - Se atraso: 1 ou 2 pares (até 4 horários)
-        # - Caso normal: até 4 horários
-        if "SAÍDA ANTECIPADA" in ' '.join(horarios).upper():
-            estrutura["Entrada1"].append(horarios[0] if len(horarios) > 0 else "")
-            estrutura["Saída1"].append(horarios[1] if len(horarios) > 1 else "")
+        if len(horarios) == 2:
+            estrutura["Entrada1"].append(horarios[0])
+            estrutura["Saída1"].append(horarios[1])
             estrutura["Entrada2"].append("")
             estrutura["Saída2"].append("")
         else:

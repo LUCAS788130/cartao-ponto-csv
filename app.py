@@ -9,7 +9,7 @@ st.markdown("<h1 style='text-align: center;'>🕒 CONVERSOR DE CARTÃO DE PONTO<
 
 uploaded_file = st.file_uploader("📎 Envie o cartão de ponto em PDF", type="pdf")
 
-# Detecta layout (antigo ou novo)
+# Detecta layout com base no texto
 def detectar_layout(texto):
     linhas = texto.split("\n")
     for linha in linhas:
@@ -19,7 +19,7 @@ def detectar_layout(texto):
                 return "novo"
     return "antigo"
 
-# Processador para layout antigo (linha simples com data e horários)
+# Processamento do layout antigo
 def processar_layout_antigo(texto):
     linhas = [linha.strip() for linha in texto.split("\n") if linha.strip()]
     registros = {}
@@ -33,10 +33,8 @@ def processar_layout_antigo(texto):
             try:
                 data = datetime.strptime(partes[0], "%d/%m/%Y").date()
                 pos_dia = partes[2:]
-
                 tem_ocorrencia = any(not eh_horario(p) for p in pos_dia)
                 horarios = [p for p in pos_dia if eh_horario(p)]
-
                 registros[data] = [] if tem_ocorrencia else horarios
             except:
                 pass
@@ -64,7 +62,7 @@ def processar_layout_antigo(texto):
 
     return pd.DataFrame()
 
-# Processador para layout novo (colunas com marcações e ocorrências)
+# Processamento do layout novo (tabular com colunas)
 def processar_layout_novo(texto):
     linhas = texto.split("\n")
     registros = []
@@ -75,21 +73,21 @@ def processar_layout_novo(texto):
             data_str = match.group(1)
             linha_upper = linha.upper()
 
-            # Ocorrências que devem ZERAR os horários
+            # Ocorrências que anulam o dia
             ocorrencias_que_zeram = [
                 "D.S.R", "FERIADO", "FÉRIAS", "FALTA", "ATESTADO", "DISPENSA", "SAÍDA",
                 "INTEGRAÇÃO", "LICENÇA REMUNERADA", "SUSPENSÃO", "DESLIGAMENTO",
                 "FOLGA COMPENSATÓRIA", "ATESTADO MÉDICO"
             ]
 
-            # Se tiver ocorrência dessas, zera os horários
-            if any(palavra in linha_upper and "SAÍDA ANTECIPADA" not in linha_upper for palavra in ocorrencias_que_zeram):
+            # SAÍDA ANTECIPADA não anula!
+            if any(oc in linha_upper and "SAÍDA ANTECIPADA" not in linha_upper for oc in ocorrencias_que_zeram):
                 registros.append((data_str, []))
                 continue
 
-            # Pega apenas parte da linha antes das ocorrências
-            partes = re.split(r"\s+(HORA|D\.S\.R|FALTA|FERIADO|FÉRIAS|ATESTADO|DISPENSA|SA[IÍ]DA|INTEGRAÇÃO|SUSPENSÃO|DESLIGAMENTO|FOLGA)", linha_upper)
-            parte_marcacoes = partes[0]
+            # Corta a linha antes da parte de ocorrências para evitar pegar horários indevidos
+            corte_ocorrencias = r"\s+(HORA|D\.S\.R|FALTA|FERIADO|FÉRIAS|ATESTADO|DISPENSA|SA[IÍ]DA|INTEGRAÇÃO|SUSPENSÃO|DESLIGAMENTO|FOLGA|COMPENSA)"
+            parte_marcacoes = re.split(corte_ocorrencias, linha_upper)[0]
 
             horarios = re.findall(r"\d{2}:\d{2}[a-z]?", parte_marcacoes)
             horarios = [h.replace('r', '').replace('g', '').replace('c', '') for h in horarios]
@@ -127,7 +125,7 @@ def processar_layout_novo(texto):
 
     return pd.DataFrame(estrutura)
 
-# EXECUÇÃO PRINCIPAL
+# Execução principal
 if uploaded_file:
     with st.spinner("⏳ Processando..."):
         with pdfplumber.open(uploaded_file) as pdf:
@@ -149,7 +147,7 @@ if uploaded_file:
         else:
             st.warning("❌ Não foi possível extrair os dados do cartão.")
 
-# Rodapé com LGPD
+# Rodapé
 st.markdown("""
 <hr>
 <p style='text-align: center; font-size: 13px;'>

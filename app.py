@@ -9,7 +9,6 @@ st.markdown("<h1 style='text-align: center;'>🕒 CONVERSOR DE CARTÃO DE PONTO<
 
 uploaded_file = st.file_uploader("📎 Envie o cartão de ponto em PDF", type="pdf")
 
-# Detecta layout com base no texto
 def detectar_layout(texto):
     linhas = texto.split("\n")
     for linha in linhas:
@@ -19,7 +18,6 @@ def detectar_layout(texto):
                 return "novo"
     return "antigo"
 
-# Processamento do layout antigo
 def processar_layout_antigo(texto):
     linhas = [linha.strip() for linha in texto.split("\n") if linha.strip()]
     registros = {}
@@ -62,10 +60,16 @@ def processar_layout_antigo(texto):
 
     return pd.DataFrame()
 
-# Processamento do layout novo (tabular com colunas)
 def processar_layout_novo(texto):
     linhas = texto.split("\n")
     registros = []
+
+    # Ocorrências que anulam o dia (exceto saída antecipada)
+    ocorrencias_que_zeram = [
+        "D.S.R", "FERIADO", "FÉRIAS", "FALTA", "ATESTADO", "DISPENSA",
+        "INTEGRAÇÃO", "LICENÇA REMUNERADA", "SUSPENSÃO", "DESLIGAMENTO",
+        "COMPENSA DIA", "FOLGA COMPENSATÓRIA", "ATESTADO MÉDICO"
+    ]
 
     for linha in linhas:
         match = re.match(r"(\d{2}/\d{2}/\d{4})", linha)
@@ -73,25 +77,23 @@ def processar_layout_novo(texto):
             data_str = match.group(1)
             linha_upper = linha.upper()
 
-            # Ocorrências que anulam o dia
-            ocorrencias_que_zeram = [
-                "D.S.R", "FERIADO", "FÉRIAS", "FALTA", "ATESTADO", "DISPENSA", "SAÍDA",
-                "INTEGRAÇÃO", "LICENÇA REMUNERADA", "SUSPENSÃO", "DESLIGAMENTO", "COMPENSA DIA",
-                "FOLGA COMPENSATÓRIA", "ATESTADO MÉDICO"
-            ]
-
-            # SAÍDA ANTECIPADA não anula!
-            if any(oc in linha_upper and "SAÍDA ANTECIPADA" not in linha_upper for oc in ocorrencias_que_zeram):
+            # Se dia tem ocorrência que zera e NÃO tem SAÍDA ANTECIPADA, zera horários
+            if any(oc in linha_upper for oc in ocorrencias_que_zeram) and "SAÍDA ANTECIPADA" not in linha_upper:
                 registros.append((data_str, []))
                 continue
 
-            # Corta a linha antes da parte de ocorrências para evitar pegar horários indevidos
-            corte_ocorrencias = r"\s+(HORA|D\.S\.R|FALTA|FERIADO|FÉRIAS|ATESTADO|DISPENSA|SAíDA ANTECIPADA|INTEGRAÇÃO|SUSPENSÃO|DESLIGAMENTO|FOLGA|COMPENSA)"
+            # Extrair só até a coluna de marcações (antes das ocorrências)
+            corte_ocorrencias = r"\s+(HORA|D\.S\.R|FALTA|FERIADO|FÉRIAS|ATESTADO|DISPENSA|SAÍDA ANTECIPADA|INTEGRAÇÃO|SUSPENSÃO|DESLIGAMENTO|FOLGA|COMPENSA)"
             parte_marcacoes = re.split(corte_ocorrencias, linha_upper)[0]
 
+            # Extrai os horários da parte de marcações (ignora sufixos)
             horarios = re.findall(r"\d{2}:\d{2}[a-z]?", parte_marcacoes)
-            horarios = [h.replace('r', '').replace('g', '').replace('c', '') for h in horarios]
+            horarios = [h[:-1] if h[-1].isalpha() else h for h in horarios]
             horarios = [h for h in horarios if re.match(r"\d{2}:\d{2}", h)]
+
+            # Se tem saída antecipada, pega só Entrada1 e Saída1 (primeiros dois horários)
+            if "SAÍDA ANTECIPADA" in linha_upper:
+                horarios = horarios[:2]
 
             registros.append((data_str, horarios))
 
@@ -117,15 +119,21 @@ def processar_layout_novo(texto):
         estrutura["Data"].append(data)
         horarios = registros_dict.get(data, [])
 
-        pares = horarios[:4] + [''] * (4 - len(horarios))
-        estrutura["Entrada1"].append(pares[0])
-        estrutura["Saída1"].append(pares[1])
-        estrutura["Entrada2"].append(pares[2])
-        estrutura["Saída2"].append(pares[3])
+        # Se tem só 2 horários (saída antecipada), preencher só Entrada1 e Saída1
+        if len(horarios) == 2:
+            estrutura["Entrada1"].append(horarios[0])
+            estrutura["Saída1"].append(horarios[1])
+            estrutura["Entrada2"].append("")
+            estrutura["Saída2"].append("")
+        else:
+            pares = horarios[:4] + [''] * (4 - len(horarios))
+            estrutura["Entrada1"].append(pares[0])
+            estrutura["Saída1"].append(pares[1])
+            estrutura["Entrada2"].append(pares[2])
+            estrutura["Saída2"].append(pares[3])
 
     return pd.DataFrame(estrutura)
 
-# Execução principal
 if uploaded_file:
     with st.spinner("⏳ Processando..."):
         with pdfplumber.open(uploaded_file) as pdf:
@@ -147,7 +155,6 @@ if uploaded_file:
         else:
             st.warning("❌ Não foi possível extrair os dados do cartão.")
 
-# Rodapé
 st.markdown("""
 <hr>
 <p style='text-align: center; font-size: 13px;'>

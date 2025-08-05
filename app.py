@@ -66,7 +66,7 @@ def processar_layout_novo(texto):
 
     # Ocorrências que anulam o dia (exceto saída antecipada)
     ocorrencias_que_zeram = [
-        "D.S.R", "FERIADO", "FÉRIAS", "FERIAS", "FALTA", "ATESTADO", "DISPENSA",
+        "D.S.R", "FERIADO", "FÉRIAS", "FALTA", "ATESTADO", "DISPENSA",
         "INTEGRAÇÃO", "LICENÇA REMUNERADA", "SUSPENSÃO", "DESLIGAMENTO",
         "COMPENSA DIA", "FOLGA COMPENSATÓRIA", "ATESTADO MÉDICO"
     ]

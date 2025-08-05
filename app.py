@@ -63,6 +63,7 @@ def processar_layout_antigo(texto):
 def processar_layout_novo(texto):
     linhas = texto.split("\n")
     registros = []
+    atraso_datas = set()
 
     ocorrencias_que_zeram = [
         "D.S.R", "FERIADO", "FÉRIAS", "FALTA", "ATESTADO", "DISPENSA",
@@ -75,6 +76,9 @@ def processar_layout_novo(texto):
         if match:
             data_str = match.group(1)
             linha_upper = linha.upper()
+
+            if "ATRASO" in linha_upper:
+                atraso_datas.add(data_str)
 
             if any(oc in linha_upper for oc in ocorrencias_que_zeram) and ("SAÍDA ANTECIPADA" not in linha_upper) and ("ATRASO" not in linha_upper):
                 registros.append((data_str, []))
@@ -117,17 +121,34 @@ def processar_layout_novo(texto):
         estrutura["Data"].append(data)
         horarios = registros_dict.get(data, [])
 
-        if len(horarios) == 2:
-            estrutura["Entrada1"].append(horarios[0])
-            estrutura["Saída1"].append(horarios[1])
-            estrutura["Entrada2"].append("")
-            estrutura["Saída2"].append("")
+        if data in atraso_datas:
+            # Dia com ATRASO
+            if len(horarios) == 2:
+                # Só 1 par válido, preenche só ele
+                estrutura["Entrada1"].append(horarios[0])
+                estrutura["Saída1"].append(horarios[1])
+                estrutura["Entrada2"].append("")
+                estrutura["Saída2"].append("")
+            else:
+                # 2 pares ou mais, pega até 2 pares
+                pares = horarios[:4] + [''] * (4 - len(horarios))
+                estrutura["Entrada1"].append(pares[0])
+                estrutura["Saída1"].append(pares[1])
+                estrutura["Entrada2"].append(pares[2])
+                estrutura["Saída2"].append(pares[3])
         else:
-            pares = horarios[:4] + [''] * (4 - len(horarios))
-            estrutura["Entrada1"].append(pares[0])
-            estrutura["Saída1"].append(pares[1])
-            estrutura["Entrada2"].append(pares[2])
-            estrutura["Saída2"].append(pares[3])
+            # Dias normais e saída antecipada
+            if len(horarios) == 2:
+                estrutura["Entrada1"].append(horarios[0])
+                estrutura["Saída1"].append(horarios[1])
+                estrutura["Entrada2"].append("")
+                estrutura["Saída2"].append("")
+            else:
+                pares = horarios[:4] + [''] * (4 - len(horarios))
+                estrutura["Entrada1"].append(pares[0])
+                estrutura["Saída1"].append(pares[1])
+                estrutura["Entrada2"].append(pares[2])
+                estrutura["Saída2"].append(pares[3])
 
     return pd.DataFrame(estrutura)
 

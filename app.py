@@ -88,10 +88,15 @@ def processar_layout_novo(texto):
             corte_ocorrencias = r"\s+(HORA|D\.S\.R|FALTA|FERIADO|FÉRIAS|ATESTADO|DISPENSA|SAÍDA ANTECIPADA|INTEGRAÇÃO|SUSPENSÃO|DESLIGAMENTO|FOLGA|COMPENSA|ATRASO)"
             parte_marcacoes = re.split(corte_ocorrencias, linha_upper)[0]
 
-            # Extrai horários válidos
-            horarios = re.findall(r"\d{2}:\d{2}[a-z]?", parte_marcacoes)
+            # Extrai apenas os horários válidos da parte de marcações (antes da ocorrência)
+            horarios = re.findall(r"\d{2}:\d{2}(?:[a-zA-Z])?", parte_marcacoes)
             horarios = [h[:-1] if h[-1].isalpha() else h for h in horarios]
             horarios = [h for h in horarios if re.match(r"\d{2}:\d{2}", h)]
+
+            # Ignora dias com apenas 1 horário (considerado inválido)
+            if len(horarios) < 2:
+                registros.append((data_str, []))
+                continue
 
             # Limita a no máximo dois pares (quatro marcações)
             horarios = horarios[:4]
@@ -119,6 +124,10 @@ def processar_layout_novo(texto):
     for data in todas_datas:
         estrutura["Data"].append(data)
         horarios = registros_dict.get(data, [])
+
+        # Reforço: ignora dias com menos de 2 horários
+        if len(horarios) < 2:
+            horarios = []
 
         pares = horarios + [""] * (4 - len(horarios))
         estrutura["Entrada1"].append(pares[0])

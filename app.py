@@ -88,18 +88,13 @@ def processar_layout_novo(texto):
             corte_ocorrencias = r"\s+(HORA|D\.S\.R|FALTA|FERIADO|FÉRIAS|ATESTADO|DISPENSA|SAÍDA ANTECIPADA|INTEGRAÇÃO|SUSPENSÃO|DESLIGAMENTO|FOLGA|COMPENSA|ATRASO)"
             parte_marcacoes = re.split(corte_ocorrencias, linha_upper)[0]
 
-            # Extrai apenas os horários válidos da parte de marcações (antes da ocorrência)
-            horarios = re.findall(r"\d{2}:\d{2}(?:[a-zA-Z])?", parte_marcacoes)
+            # Extrai horários válidos
+            horarios = re.findall(r"\d{2}:\d{2}[a-z]?", parte_marcacoes)
             horarios = [h[:-1] if h[-1].isalpha() else h for h in horarios]
             horarios = [h for h in horarios if re.match(r"\d{2}:\d{2}", h)]
 
-            # Ignora dias com apenas 1 horário (considerado inválido)
-            if len(horarios) < 2:
-                registros.append((data_str, []))
-                continue
-
-            # Limita a no máximo dois pares (quatro marcações)
-            horarios = horarios[:4]
+            # Limita a no máximo seis pares (doze marcações)
+            horarios = horarios[:12]
 
             registros.append((data_str, horarios))
 
@@ -118,22 +113,34 @@ def processar_layout_novo(texto):
     estrutura = {
         "Data": [],
         "Entrada1": [], "Saída1": [],
-        "Entrada2": [], "Saída2": []
+        "Entrada2": [], "Saída2": [],
+        "Entrada3": [], "Saída3": [],
+        "Entrada4": [], "Saída4": [],
+        "Entrada5": [], "Saída5": [],
+        "Entrada6": [], "Saída6": []
     }
 
     for data in todas_datas:
         estrutura["Data"].append(data)
         horarios = registros_dict.get(data, [])
 
-        # Reforço: ignora dias com menos de 2 horários
+        # Se tem menos que 2 horários, considera vazio para o dia inteiro (evita entradas soltas)
         if len(horarios) < 2:
             horarios = []
 
-        pares = horarios + [""] * (4 - len(horarios))
+        pares = horarios + [""] * (12 - len(horarios))
         estrutura["Entrada1"].append(pares[0])
         estrutura["Saída1"].append(pares[1])
         estrutura["Entrada2"].append(pares[2])
         estrutura["Saída2"].append(pares[3])
+        estrutura["Entrada3"].append(pares[4])
+        estrutura["Saída3"].append(pares[5])
+        estrutura["Entrada4"].append(pares[6])
+        estrutura["Saída4"].append(pares[7])
+        estrutura["Entrada5"].append(pares[8])
+        estrutura["Saída5"].append(pares[9])
+        estrutura["Entrada6"].append(pares[10])
+        estrutura["Saída6"].append(pares[11])
 
     return pd.DataFrame(estrutura)
 

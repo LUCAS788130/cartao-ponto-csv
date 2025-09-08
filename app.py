@@ -64,7 +64,7 @@ def processar_layout_novo(texto):
     linhas = texto.split("\n")
     registros = []
 
-    # Ocorrências que anulam o dia (exceto saída antecipada e atraso)
+    # Ocorrências que anulam o dia (exceto saída antecipada, atraso e DISPENSA FALTA DE PRODUÇÃO - P)
     ocorrencias_que_zeram = [
         "D.S.R", "FERIADO", "FÉRIAS", "FALTA", "ATESTADO", "FERIAS", "DISPENSA",
         "INTEGRAÇÃO", "LICENÇA REMUNERADA", "SUSPENSÃO", "DESLIGAMENTO",
@@ -77,10 +77,11 @@ def processar_layout_novo(texto):
             data_str = match.group(1)
             linha_upper = linha.upper()
 
-            # Zerar horários se ocorrência for irrelevante E não tiver "SAÍDA ANTECIPADA" ou "ATRASO"
+            # Zerar horários se ocorrência for irrelevante, exceto SAÍDA ANTECIPADA, ATRASO ou DISPENSA FALTA DE PRODUÇÃO - P
             if any(oc in linha_upper for oc in ocorrencias_que_zeram) and \
                 "SAÍDA ANTECIPADA" not in linha_upper and \
-                "ATRASO" not in linha_upper:
+                "ATRASO" not in linha_upper and \
+                "DISPENSA FALTA DE PRODUÇÃO - P" not in linha_upper:
                 registros.append((data_str, []))
                 continue
 

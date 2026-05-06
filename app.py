@@ -27,6 +27,11 @@ def criar_estrutura_padrao():
 
 
 def preencher_horarios(estrutura, horarios):
+    horarios = horarios[:12]
+
+    if len(horarios) % 2 != 0:
+        horarios = horarios[:-1]
+
     pares = horarios + [""] * (12 - len(horarios))
 
     for i in range(6):
@@ -80,6 +85,7 @@ def processar_layout_antigo(texto):
                 pos_dia = partes[2:]
                 tem_ocorrencia = any(not eh_horario(p) for p in pos_dia)
                 horarios = [p for p in pos_dia if eh_horario(p)]
+
                 registros[data] = [] if tem_ocorrencia else horarios
             except:
                 pass
@@ -92,7 +98,10 @@ def processar_layout_antigo(texto):
 
     tabela = []
 
-    for dia in [inicio + timedelta(days=i) for i in range((fim - inicio).days + 1)]:
+    for dia in [
+        inicio + timedelta(days=i)
+        for i in range((fim - inicio).days + 1)
+    ]:
         linha = {"Data": dia.strftime("%d/%m/%Y")}
         horarios = registros.get(dia, [])
 
@@ -165,7 +174,10 @@ def processar_layout_novo(texto):
 
     estrutura = criar_estrutura_padrao()
 
-    for dia in [data_inicio + timedelta(days=i) for i in range((data_fim - data_inicio).days + 1)]:
+    for dia in [
+        data_inicio + timedelta(days=i)
+        for i in range((data_fim - data_inicio).days + 1)
+    ]:
         data_formatada = dia.strftime("%d/%m/%Y")
         estrutura["Data"].append(data_formatada)
         preencher_horarios(estrutura, registros_dict.get(data_formatada, []))
@@ -177,61 +189,71 @@ def processar_layout_jbs_pdf(pdf):
     registros = {}
 
     for page in pdf.pages:
-        texto_layout = page.extract_text(
-            layout=True,
+        words = page.extract_words(
             x_tolerance=1,
-            y_tolerance=3
-        ) or ""
+            y_tolerance=3,
+            keep_blank_chars=False,
+            use_text_flow=False
+        )
 
-        linhas = texto_layout.split("\n")
+        if not words:
+            continue
 
-        coluna_faltas = None
+        x_marcacao = None
+        x_faltas = None
 
-        for linha in linhas:
-            if "FALTAS" in linha.upper():
-                coluna_faltas = linha.upper().find("FALTAS")
-                break
+        for w in words:
+            texto = w["text"].strip().upper()
 
-        if coluna_faltas is None or coluna_faltas < 30:
-            coluna_faltas = 49
+            if texto.startswith("MARCA"):
+                x_marcacao = float(w["x0"])
 
-        for linha in linhas:
-            if not re.match(r"\s*\d{2}/\d{2}/\d{4}", linha):
+            if texto == "FALTAS":
+                x_faltas = float(w["x0"])
+
+        if x_marcacao is None:
+            x_marcacao = page.width * 0.30
+
+        if x_faltas is None:
+            x_faltas = page.width * 0.53
+
+        for w_data in words:
+            texto_data = w_data["text"].strip()
+
+            if not re.fullmatch(r"\d{2}/\d{2}/\d{4}", texto_data):
                 continue
 
-            match_data = re.search(r"\d{2}/\d{2}/\d{4}", linha)
-            if not match_data:
+            if float(w_data["x0"]) > page.width * 0.25:
                 continue
-
-            data_str = match_data.group(0)
 
             try:
-                data = datetime.strptime(data_str, "%d/%m/%Y").date()
+                data = datetime.strptime(texto_data, "%d/%m/%Y").date()
             except:
                 continue
 
-            # Corta a linha antes da coluna FALTAS.
-            # Assim, pega somente a área:
-            # "Dia" + "Marcação ou Situação Funcional".
-            parte_marcacao = linha[:coluna_faltas]
+            top_data = float(w_data["top"])
 
-            # Remove a parte inicial da data e do tipo do dia.
-            # Exemplo:
-            # 17/04/2024 Qua-Norm 07:01 11:00 12:00 16:21
-            parte_marcacao = re.sub(
-                r"^\s*\d{2}/\d{2}/\d{4}\s+\S+\s*",
-                "",
-                parte_marcacao
-            )
+            mesma_linha = [
+                w for w in words
+                if abs(float(w["top"]) - top_data) <= 2.5
+            ]
 
-            # Captura somente horários da área de marcação funcional.
-            horarios = re.findall(r"(?<!-)\b\d{2}:\d{2}\b", parte_marcacao)
+            mesma_linha = sorted(mesma_linha, key=lambda w: float(w["x0"]))
 
-            # Remove batida isolada sem par, mantendo a regra do seu código.
-            if len(horarios) % 2 != 0:
-                horarios = horarios[:-1]
+            horarios = []
 
-            registros[data] = horarios[:12]
+            for w in mesma_linha:
+                texto = w["text"].strip()
+                x0 = float(w["x0"])
+
+                if (
+                    x0 >= x_marcacao - 25
+                    and x0 < x_faltas - 3
+                    and re.fullmatch(r"\d{2}:\d{2}", texto)
+                ):
+                    horarios.append(texto)
+
+            registros[data] = horarios
 
     if not registros:
         return pd.DataFrame()
@@ -241,7 +263,10 @@ def processar_layout_jbs_pdf(pdf):
 
     estrutura = criar_estrutura_padrao()
 
-    for dia in [inicio + timedelta(days=i) for i in range((fim - inicio).days + 1)]:
+    for dia in [
+        inicio + timedelta(days=i)
+        for i in range((fim - inicio).days + 1)
+    ]:
         estrutura["Data"].append(dia.strftime("%d/%m/%Y"))
         preencher_horarios(estrutura, registros.get(dia, []))
 

@@ -194,7 +194,7 @@ def processar_layout_jbs_pdf(pdf):
 
     for page in pdf.pages:
         words = page.extract_words(
-            x_tolerance=2,
+            x_tolerance=1,
             y_tolerance=3,
             keep_blank_chars=False,
             use_text_flow=False
@@ -203,28 +203,33 @@ def processar_layout_jbs_pdf(pdf):
         if not words:
             continue
 
-        # Área exata da coluna "Marcação ou Situação Funcional"
-        # Conforme o layout JBS/Forponto:
-        # começa depois da coluna Dia e termina antes de FALTAS.
-        x_inicio_marcacao = 160
-        x_fim_marcacao = 315
+        # Localiza a coluna FALTAS pelo cabeçalho
+        x_faltas = None
+        for w in words:
+            if w["text"].strip().upper() == "FALTAS":
+                x_faltas = float(w["x0"])
+                break
 
-        # Agrupa palavras por linha visual
+        if x_faltas is None:
+            x_faltas = 316  # fallback para o padrão JBS
+
         linhas = {}
 
         for w in words:
-            y = round(float(w["top"]), 1)
+            y = round(float(w["top"]) / 2) * 2
             linhas.setdefault(y, []).append(w)
 
         for y, itens in linhas.items():
-            itens = sorted(itens, key=lambda w: w["x0"])
+            itens = sorted(itens, key=lambda w: float(w["x0"]))
 
-            # Localiza a data da linha
             data_word = None
+            x_data_fim = None
 
             for w in itens:
-                if re.fullmatch(r"\d{2}/\d{2}/\d{4}", w["text"].strip()):
-                    data_word = w["text"].strip()
+                texto = w["text"].strip()
+                if re.fullmatch(r"\d{2}/\d{2}/\d{4}", texto):
+                    data_word = texto
+                    x_data_fim = float(w["x1"])
                     break
 
             if not data_word:
@@ -241,18 +246,17 @@ def processar_layout_jbs_pdf(pdf):
                 texto = w["text"].strip()
                 x0 = float(w["x0"])
 
-                # Pega SOMENTE horários dentro da coluna destacada:
-                # "Marcação ou Situação Funcional"
+                # Pega somente o que está depois da coluna Dia
+                # e antes da coluna FALTAS.
                 if (
-                    x_inicio_marcacao <= x0 <= x_fim_marcacao
+                    x0 > x_data_fim + 35
+                    and x0 < x_faltas
                     and re.fullmatch(r"\d{2}:\d{2}", texto)
                 ):
                     horarios.append(texto)
 
-            # Mantém no máximo 6 pares, conforme seu padrão geral
             horarios = horarios[:12]
 
-            # Remove marcação isolada sem par
             if len(horarios) % 2 != 0:
                 horarios = horarios[:-1]
 

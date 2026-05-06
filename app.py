@@ -14,10 +14,29 @@ st.markdown(
 uploaded_file = st.file_uploader("📎 Envie o cartão de ponto em PDF", type="pdf")
 
 
+def criar_estrutura_padrao():
+    return {
+        "Data": [],
+        "Entrada1": [], "Saída1": [],
+        "Entrada2": [], "Saída2": [],
+        "Entrada3": [], "Saída3": [],
+        "Entrada4": [], "Saída4": [],
+        "Entrada5": [], "Saída5": [],
+        "Entrada6": [], "Saída6": []
+    }
+
+
+def preencher_horarios(estrutura, horarios):
+    pares = horarios + [""] * (12 - len(horarios))
+
+    for i in range(6):
+        estrutura[f"Entrada{i + 1}"].append(pares[2 * i])
+        estrutura[f"Saída{i + 1}"].append(pares[2 * i + 1])
+
+
 def detectar_layout(texto):
     texto_upper = texto.upper()
 
-    # Layout JBS / Forponto
     if (
         "FORPONTO" in texto_upper
         and "JBS" in texto_upper
@@ -25,8 +44,8 @@ def detectar_layout(texto):
     ):
         return "jbs"
 
-    # Layout novo já existente
     linhas = texto.split("\n")
+
     for linha in linhas:
         if re.match(r"\d{2}/\d{2}/\d{4}", linha):
             partes = linha.split()
@@ -54,42 +73,45 @@ def processar_layout_antigo(texto):
 
     for ln in linhas:
         partes = ln.split()
+
         if len(partes) >= 2 and "/" in partes[0]:
             try:
                 data = datetime.strptime(partes[0], "%d/%m/%Y").date()
                 pos_dia = partes[2:]
                 tem_ocorrencia = any(not eh_horario(p) for p in pos_dia)
                 horarios = [p for p in pos_dia if eh_horario(p)]
+
                 registros[data] = [] if tem_ocorrencia else horarios
             except:
                 pass
 
-    if registros:
-        inicio = min(registros.keys())
-        fim = max(registros.keys())
+    if not registros:
+        return pd.DataFrame()
 
-        dias_corridos = [
-            inicio + timedelta(days=i)
-            for i in range((fim - inicio).days + 1)
-        ]
+    inicio = min(registros.keys())
+    fim = max(registros.keys())
 
-        tabela = []
+    dias_corridos = [
+        inicio + timedelta(days=i)
+        for i in range((fim - inicio).days + 1)
+    ]
 
-        for dia in dias_corridos:
-            linha = {"Data": dia.strftime("%d/%m/%Y")}
-            horarios = registros.get(dia, [])
+    tabela = []
 
-            for i in range(2):
-                entrada = horarios[i * 2] if len(horarios) > i * 2 else ""
-                saida = horarios[i * 2 + 1] if len(horarios) > i * 2 + 1 else ""
-                linha[f"Entrada{i + 1}"] = entrada
-                linha[f"Saída{i + 1}"] = saida
+    for dia in dias_corridos:
+        linha = {"Data": dia.strftime("%d/%m/%Y")}
+        horarios = registros.get(dia, [])
 
-            tabela.append(linha)
+        for i in range(2):
+            entrada = horarios[i * 2] if len(horarios) > i * 2 else ""
+            saida = horarios[i * 2 + 1] if len(horarios) > i * 2 + 1 else ""
 
-        return pd.DataFrame(tabela)
+            linha[f"Entrada{i + 1}"] = entrada
+            linha[f"Saída{i + 1}"] = saida
 
-    return pd.DataFrame()
+        tabela.append(linha)
+
+    return pd.DataFrame(tabela)
 
 
 def processar_layout_novo(texto):
@@ -97,24 +119,15 @@ def processar_layout_novo(texto):
     registros = []
 
     ocorrencias_que_zeram = [
-        "D.S.R",
-        "FERIADO",
-        "FÉRIAS",
-        "FALTA",
-        "ATESTADO",
-        "FERIAS",
-        "DISPENSA",
-        "INTEGRAÇÃO",
-        "LICENÇA REMUNERADA",
-        "SUSPENSÃO",
-        "DESLIGAMENTO",
-        "COMPENSA DIA",
-        "FOLGA COMPENSATÓRIA",
+        "D.S.R", "FERIADO", "FÉRIAS", "FALTA", "ATESTADO", "FERIAS",
+        "DISPENSA", "INTEGRAÇÃO", "LICENÇA REMUNERADA", "SUSPENSÃO",
+        "DESLIGAMENTO", "COMPENSA DIA", "FOLGA COMPENSATÓRIA",
         "ATESTADO MÉDICO"
     ]
 
     for linha in linhas:
         match = re.match(r"(\d{2}/\d{2}/\d{4})", linha)
+
         if match:
             data_str = match.group(1)
             linha_upper = linha.upper()
@@ -176,72 +189,79 @@ def processar_layout_novo(texto):
     return pd.DataFrame(estrutura)
 
 
-def processar_layout_jbs(texto):
-    linhas = [linha.strip() for linha in texto.split("\n") if linha.strip()]
+def processar_layout_jbs_pdf(pdf):
     registros = {}
 
-    padrao_linha = re.compile(
-        r"^(\d{2}/\d{2}/\d{4})\s+([A-Za-zÀ-ÿ]{3}[-A-Za-zÀ-ÿ]*)\s*(.*)$"
-    )
+    for page in pdf.pages:
+        words = page.extract_words(
+            x_tolerance=2,
+            y_tolerance=3,
+            keep_blank_chars=False,
+            use_text_flow=False
+        )
 
-    ocorrencias_sem_marcacao = [
-        "INTEGRAÇÃO",
-        "INTEGRACAO",
-        "ATESTADO",
-        "ATESTADO MÉDICO",
-        "ATESTADO MEDICO",
-        "FÉRIAS",
-        "FERIAS",
-        "FALTA",
-        "FOLGA",
-        "FOLG",
-        "FER",
-        "DESLIGAMENTO",
-        "SUSPENSÃO",
-        "SUSPENSAO",
-        "LICENÇA",
-        "LICENCA"
-    ]
-
-    for linha in linhas:
-        match = padrao_linha.match(linha)
-        if not match:
+        if not words:
             continue
 
-        data_str = match.group(1)
-        dia_funcional = match.group(2).upper()
-        marcacao_ou_situacao = match.group(3).strip()
-        marcacao_upper = marcacao_ou_situacao.upper()
+        largura = float(page.width)
 
-        try:
-            data = datetime.strptime(data_str, "%d/%m/%Y").date()
-        except:
-            continue
+        # Coluna "Marcação ou Situação Funcional"
+        # Pela estrutura do Forponto/JBS, fica entre a coluna do dia e a coluna FALTAS.
+        limite_inicio = largura * 0.28
+        limite_fim = largura * 0.52
 
-        # Se a coluna "Marcação ou Situação Funcional" trouxer apenas ocorrência,
-        # o dia entra vazio.
-        if any(oc in marcacao_upper or oc in dia_funcional for oc in ocorrencias_sem_marcacao):
-            horarios_encontrados = re.findall(r"\b\d{2}:\d{2}\b", marcacao_ou_situacao)
+        # Ajuste dinâmico pelo cabeçalho "FALTAS", quando localizado.
+        for w in words:
+            if w["text"].strip().upper() == "FALTAS":
+                limite_fim = float(w["x0"]) - 3
+                break
 
-            if not horarios_encontrados:
-                registros[data] = []
+        # Agrupa palavras pela mesma linha visual.
+        linhas = {}
+
+        for w in words:
+            y = round(float(w["top"]) / 3) * 3
+            linhas.setdefault(y, []).append(w)
+
+        for y, itens in linhas.items():
+            itens = sorted(itens, key=lambda x: x["x0"])
+
+            textos = [w["text"] for w in itens]
+            texto_linha = " ".join(textos)
+
+            match_data = re.match(r"^(\d{2}/\d{2}/\d{4})", texto_linha)
+
+            if not match_data:
                 continue
 
-        # Captura somente horários da coluna "Marcação ou Situação Funcional".
-        # Exemplo JBS:
-        # 17/04/2024 Qua-Norm 07:01 11:00 12:00 16:21 00:27 -00:27
-        horarios = re.findall(r"(?<!-)\b\d{2}:\d{2}\b", marcacao_ou_situacao)
+            data_str = match_data.group(1)
 
-        # Remove horários de saldo/horas extras que aparecem depois das marcações reais.
-        # No Forponto/JBS, a marcação funcional costuma ser composta pelas primeiras 4 batidas.
-        if len(horarios) > 4:
-            horarios = horarios[:4]
+            try:
+                data = datetime.strptime(data_str, "%d/%m/%Y").date()
+            except:
+                continue
 
-        # Evita deixar batida isolada sem par de saída.
-        if len(horarios) % 2 != 0:
-            horarios = horarios[:-1]
+            horarios = []
 
-        registros[data] = horarios
+            for w in itens:
+                txt = w["text"].strip()
+                x0 = float(w["x0"])
+
+                if (
+                    limite_inicio <= x0 <= limite_fim
+                    and re.fullmatch(r"\d{2}:\d{2}", txt)
+                ):
+                    horarios.append(txt)
+
+            # Garante que só entram horários da coluna "Marcação ou Situação Funcional".
+            # Exemplo válido:
+            # 07:01 11:00 12:00 16:21
+            horarios = horarios[:12]
+
+            if len(horarios) % 2 != 0:
+                horarios = horarios[:-1]
+
+            registros[data] = horarios
 
     if not registros:
         return pd.DataFrame()
@@ -264,47 +284,26 @@ def processar_layout_jbs(texto):
     return pd.DataFrame(estrutura)
 
 
-def criar_estrutura_padrao():
-    return {
-        "Data": [],
-        "Entrada1": [], "Saída1": [],
-        "Entrada2": [], "Saída2": [],
-        "Entrada3": [], "Saída3": [],
-        "Entrada4": [], "Saída4": [],
-        "Entrada5": [], "Saída5": [],
-        "Entrada6": [], "Saída6": []
-    }
-
-
-def preencher_horarios(estrutura, horarios):
-    pares = horarios + [""] * (12 - len(horarios))
-
-    for i in range(6):
-        estrutura[f"Entrada{i + 1}"].append(pares[2 * i])
-        estrutura[f"Saída{i + 1}"].append(pares[2 * i + 1])
-
-
 if uploaded_file:
     with st.spinner("⏳ Processando..."):
         with pdfplumber.open(uploaded_file) as pdf:
             texto = "\n".join(page.extract_text() or "" for page in pdf.pages)
+            layout = detectar_layout(texto)
 
-        layout = detectar_layout(texto)
+            nomes_layout = {
+                "antigo": "ANTIGO",
+                "novo": "NOVO",
+                "jbs": "JBS / FORPONTO"
+            }
 
-        nomes_layout = {
-            "antigo": "ANTIGO",
-            "novo": "NOVO",
-            "jbs": "JBS / FORPONTO"
-        }
+            st.info(f"📄 Layout detectado: **{nomes_layout.get(layout, layout.upper())}**")
 
-        st.info(f"📄 Layout detectado: **{nomes_layout.get(layout, layout.upper())}**")
-
-        if layout == "jbs":
-            df = processar_layout_jbs(texto)
-        elif layout == "novo":
-            df = processar_layout_novo(texto)
-        else:
-            df = processar_layout_antigo(texto)
+            if layout == "jbs":
+                df = processar_layout_jbs_pdf(pdf)
+            elif layout == "novo":
+                df = processar_layout_novo(texto)
+            else:
+                df = processar_layout_antigo(texto)
 
         if not df.empty:
             st.success("✅ Conversão concluída com sucesso!")

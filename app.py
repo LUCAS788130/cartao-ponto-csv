@@ -193,36 +193,66 @@ def processar_layout_jbs_pdf(pdf):
     registros = {}
 
     for page in pdf.pages:
-        texto = page.extract_text() or ""
-        linhas = [linha.strip() for linha in texto.split("\n") if linha.strip()]
+        words = page.extract_words(
+            x_tolerance=2,
+            y_tolerance=3,
+            keep_blank_chars=False,
+            use_text_flow=False
+        )
 
-        for linha in linhas:
-            match = re.match(r"^(\d{2}/\d{2}/\d{4})\s+\S+\s+(.*)$", linha)
+        if not words:
+            continue
 
-            if not match:
+        # Área exata da coluna "Marcação ou Situação Funcional"
+        # Conforme o layout JBS/Forponto:
+        # começa depois da coluna Dia e termina antes de FALTAS.
+        x_inicio_marcacao = 160
+        x_fim_marcacao = 315
+
+        # Agrupa palavras por linha visual
+        linhas = {}
+
+        for w in words:
+            y = round(float(w["top"]), 1)
+            linhas.setdefault(y, []).append(w)
+
+        for y, itens in linhas.items():
+            itens = sorted(itens, key=lambda w: w["x0"])
+
+            # Localiza a data da linha
+            data_word = None
+
+            for w in itens:
+                if re.fullmatch(r"\d{2}/\d{2}/\d{4}", w["text"].strip()):
+                    data_word = w["text"].strip()
+                    break
+
+            if not data_word:
                 continue
 
-            data_str = match.group(1)
-            conteudo_apos_dia = match.group(2).strip()
-
             try:
-                data = datetime.strptime(data_str, "%d/%m/%Y").date()
+                data = datetime.strptime(data_word, "%d/%m/%Y").date()
             except:
                 continue
 
-            if re.search(
-                r"\b(INTEGRAÇÃO|INTEGRACAO|ATESTADO|ATESTADO MÉDICO|ATESTADO MEDICO|"
-                r"FÉRIAS|FERIAS|FALTA|FOLGA|FOLG|FER|DESLIGAMENTO|SUSPENSÃO|"
-                r"SUSPENSAO|LICENÇA|LICENCA)\b",
-                conteudo_apos_dia.upper()
-            ):
-                registros[data] = []
-                continue
+            horarios = []
 
-            horarios = re.findall(r"(?<!-)\b\d{2}:\d{2}\b", conteudo_apos_dia)
+            for w in itens:
+                texto = w["text"].strip()
+                x0 = float(w["x0"])
 
-            horarios = horarios[:4]
+                # Pega SOMENTE horários dentro da coluna destacada:
+                # "Marcação ou Situação Funcional"
+                if (
+                    x_inicio_marcacao <= x0 <= x_fim_marcacao
+                    and re.fullmatch(r"\d{2}:\d{2}", texto)
+                ):
+                    horarios.append(texto)
 
+            # Mantém no máximo 6 pares, conforme seu padrão geral
+            horarios = horarios[:12]
+
+            # Remove marcação isolada sem par
             if len(horarios) % 2 != 0:
                 horarios = horarios[:-1]
 

@@ -81,7 +81,6 @@ def processar_layout_antigo(texto):
                 pos_dia = partes[2:]
                 tem_ocorrencia = any(not eh_horario(p) for p in pos_dia)
                 horarios = [p for p in pos_dia if eh_horario(p)]
-
                 registros[data] = [] if tem_ocorrencia else horarios
             except:
                 pass
@@ -195,65 +194,61 @@ def processar_layout_jbs_pdf(pdf):
         if not words:
             continue
 
-        x_faltas = None
+        for w_data in words:
+            texto_data = w_data["text"].strip()
 
-        for w in words:
-            if w["text"].strip().upper() == "FALTAS":
-                x_faltas = float(w["x0"])
-                break
-
-        if x_faltas is None:
-            x_faltas = 316
-
-        # COLUNA EXATA DA MARCAÇÃO FUNCIONAL NO PADRÃO JBS/FORPONTO
-        x_inicio_marcacao = 140
-        x_fim_marcacao = x_faltas - 5
-
-        # Agrupa visualmente por linha
-        linhas = {}
-
-        for w in words:
-            y = round(float(w["top"]) / 3) * 3
-            linhas.setdefault(y, []).append(w)
-
-        for y, itens in linhas.items():
-            itens = sorted(itens, key=lambda w: float(w["x0"]))
-
-            texto_linha = " ".join(w["text"] for w in itens)
-
-            match_data = re.search(r"\d{2}/\d{2}/\d{4}", texto_linha)
-
-            if not match_data:
+            if not re.fullmatch(r"\d{2}/\d{2}/\d{4}", texto_data):
                 continue
 
-            data_str = match_data.group(0)
-
-            # Garante que é linha do quadro de ponto, não cabeçalho/período
-            data_word = None
-            for w in itens:
-                if data_str in w["text"] and float(w["x0"]) < 120:
-                    data_word = w
-                    break
-
-            if data_word is None:
+            if float(w_data["x0"]) > 80:
                 continue
 
             try:
-                data = datetime.strptime(data_str, "%d/%m/%Y").date()
+                data = datetime.strptime(texto_data, "%d/%m/%Y").date()
             except:
                 continue
 
-            horarios = []
+            top = float(w_data["top"])
+            bottom = float(w_data["bottom"])
 
-            for w in itens:
-                txt = w["text"].strip()
-                x0 = float(w["x0"])
+            # RECORTE EXATO DA COLUNA:
+            # "Marcação ou Situação Funcional"
+            #
+            # No layout JBS/Forponto enviado:
+            # X 175 a 305 = área dos horários da coluna de marcação.
+            # Não pega FALTAS, AD.NOT, H.E.50%, H.NEG ou Horas.
+            bbox = (
+                175,
+                max(0, top - 2),
+                305,
+                min(float(page.height), bottom + 2)
+            )
 
-                if (
-                    x_inicio_marcacao <= x0 <= x_fim_marcacao
-                    and re.fullmatch(r"\d{2}:\d{2}", txt)
-                ):
-                    horarios.append(txt)
+            area = page.crop(bbox)
+            texto_area = area.extract_text(
+                x_tolerance=2,
+                y_tolerance=3
+            ) or ""
+
+            horarios = re.findall(r"\b\d{2}:\d{2}\b", texto_area)
+
+            # Fallback: caso o crop não extraia texto, usa words da mesma linha
+            # dentro da mesma área.
+            if not horarios:
+                mesma_linha = [
+                    w for w in words
+                    if abs(float(w["top"]) - top) <= 2.5
+                ]
+
+                for w in mesma_linha:
+                    txt = w["text"].strip()
+                    x0 = float(w["x0"])
+
+                    if (
+                        175 <= x0 <= 305
+                        and re.fullmatch(r"\d{2}:\d{2}", txt)
+                    ):
+                        horarios.append(txt)
 
             registros[data] = horarios[:12]
 

@@ -80,7 +80,6 @@ def processar_layout_antigo(texto):
                 pos_dia = partes[2:]
                 tem_ocorrencia = any(not eh_horario(p) for p in pos_dia)
                 horarios = [p for p in pos_dia if eh_horario(p)]
-
                 registros[data] = [] if tem_ocorrencia else horarios
             except:
                 pass
@@ -91,23 +90,15 @@ def processar_layout_antigo(texto):
     inicio = min(registros.keys())
     fim = max(registros.keys())
 
-    dias_corridos = [
-        inicio + timedelta(days=i)
-        for i in range((fim - inicio).days + 1)
-    ]
-
     tabela = []
 
-    for dia in dias_corridos:
+    for dia in [inicio + timedelta(days=i) for i in range((fim - inicio).days + 1)]:
         linha = {"Data": dia.strftime("%d/%m/%Y")}
         horarios = registros.get(dia, [])
 
         for i in range(2):
-            entrada = horarios[i * 2] if len(horarios) > i * 2 else ""
-            saida = horarios[i * 2 + 1] if len(horarios) > i * 2 + 1 else ""
-
-            linha[f"Entrada{i + 1}"] = entrada
-            linha[f"Saída{i + 1}"] = saida
+            linha[f"Entrada{i + 1}"] = horarios[i * 2] if len(horarios) > i * 2 else ""
+            linha[f"Saída{i + 1}"] = horarios[i * 2 + 1] if len(horarios) > i * 2 + 1 else ""
 
         tabela.append(linha)
 
@@ -156,9 +147,7 @@ def processar_layout_novo(texto):
             if len(horarios) % 2 != 0:
                 horarios = horarios[:-1]
 
-            horarios = horarios[:12]
-
-            registros.append((data_str, horarios))
+            registros.append((data_str, horarios[:12]))
 
     if not registros:
         return pd.DataFrame()
@@ -169,11 +158,6 @@ def processar_layout_novo(texto):
     data_inicio = df["Data"].min()
     data_fim = df["Data"].max()
 
-    todas_datas = [
-        (data_inicio + timedelta(days=i)).strftime("%d/%m/%Y")
-        for i in range((data_fim - data_inicio).days + 1)
-    ]
-
     registros_dict = {
         d.strftime("%d/%m/%Y"): h
         for d, h in zip(df["Data"], df["Horários"])
@@ -181,10 +165,10 @@ def processar_layout_novo(texto):
 
     estrutura = criar_estrutura_padrao()
 
-    for data in todas_datas:
-        estrutura["Data"].append(data)
-        horarios = registros_dict.get(data, [])
-        preencher_horarios(estrutura, horarios)
+    for dia in [data_inicio + timedelta(days=i) for i in range((data_fim - data_inicio).days + 1)]:
+        data_formatada = dia.strftime("%d/%m/%Y")
+        estrutura["Data"].append(data_formatada)
+        preencher_horarios(estrutura, registros_dict.get(data_formatada, []))
 
     return pd.DataFrame(estrutura)
 
@@ -193,74 +177,61 @@ def processar_layout_jbs_pdf(pdf):
     registros = {}
 
     for page in pdf.pages:
-        words = page.extract_words(
+        texto_layout = page.extract_text(
+            layout=True,
             x_tolerance=1,
-            y_tolerance=3,
-            keep_blank_chars=False,
-            use_text_flow=False
-        )
+            y_tolerance=3
+        ) or ""
 
-        if not words:
-            continue
+        linhas = texto_layout.split("\n")
 
-        # Localiza a coluna FALTAS pelo cabeçalho
-        x_faltas = None
-        for w in words:
-            if w["text"].strip().upper() == "FALTAS":
-                x_faltas = float(w["x0"])
+        coluna_faltas = None
+
+        for linha in linhas:
+            if "FALTAS" in linha.upper():
+                coluna_faltas = linha.upper().find("FALTAS")
                 break
 
-        if x_faltas is None:
-            x_faltas = 316  # fallback para o padrão JBS
+        if coluna_faltas is None or coluna_faltas < 30:
+            coluna_faltas = 49
 
-        linhas = {}
-
-        for w in words:
-            y = round(float(w["top"]) / 2) * 2
-            linhas.setdefault(y, []).append(w)
-
-        for y, itens in linhas.items():
-            itens = sorted(itens, key=lambda w: float(w["x0"]))
-
-            data_word = None
-            x_data_fim = None
-
-            for w in itens:
-                texto = w["text"].strip()
-                if re.fullmatch(r"\d{2}/\d{2}/\d{4}", texto):
-                    data_word = texto
-                    x_data_fim = float(w["x1"])
-                    break
-
-            if not data_word:
+        for linha in linhas:
+            if not re.match(r"\s*\d{2}/\d{2}/\d{4}", linha):
                 continue
 
+            match_data = re.search(r"\d{2}/\d{2}/\d{4}", linha)
+            if not match_data:
+                continue
+
+            data_str = match_data.group(0)
+
             try:
-                data = datetime.strptime(data_word, "%d/%m/%Y").date()
+                data = datetime.strptime(data_str, "%d/%m/%Y").date()
             except:
                 continue
 
-            horarios = []
+            # Corta a linha antes da coluna FALTAS.
+            # Assim, pega somente a área:
+            # "Dia" + "Marcação ou Situação Funcional".
+            parte_marcacao = linha[:coluna_faltas]
 
-            for w in itens:
-                texto = w["text"].strip()
-                x0 = float(w["x0"])
+            # Remove a parte inicial da data e do tipo do dia.
+            # Exemplo:
+            # 17/04/2024 Qua-Norm 07:01 11:00 12:00 16:21
+            parte_marcacao = re.sub(
+                r"^\s*\d{2}/\d{2}/\d{4}\s+\S+\s*",
+                "",
+                parte_marcacao
+            )
 
-                # Pega somente o que está depois da coluna Dia
-                # e antes da coluna FALTAS.
-                if (
-                    x0 > x_data_fim + 35
-                    and x0 < x_faltas
-                    and re.fullmatch(r"\d{2}:\d{2}", texto)
-                ):
-                    horarios.append(texto)
+            # Captura somente horários da área de marcação funcional.
+            horarios = re.findall(r"(?<!-)\b\d{2}:\d{2}\b", parte_marcacao)
 
-            horarios = horarios[:12]
-
+            # Remove batida isolada sem par, mantendo a regra do seu código.
             if len(horarios) % 2 != 0:
                 horarios = horarios[:-1]
 
-            registros[data] = horarios
+            registros[data] = horarios[:12]
 
     if not registros:
         return pd.DataFrame()
@@ -270,15 +241,9 @@ def processar_layout_jbs_pdf(pdf):
 
     estrutura = criar_estrutura_padrao()
 
-    dias_corridos = [
-        inicio + timedelta(days=i)
-        for i in range((fim - inicio).days + 1)
-    ]
-
-    for dia in dias_corridos:
+    for dia in [inicio + timedelta(days=i) for i in range((fim - inicio).days + 1)]:
         estrutura["Data"].append(dia.strftime("%d/%m/%Y"))
-        horarios = registros.get(dia, [])
-        preencher_horarios(estrutura, horarios)
+        preencher_horarios(estrutura, registros.get(dia, []))
 
     return pd.DataFrame(estrutura)
 

@@ -1,1 +1,100 @@
+"""Monta a tabela de revisão mostrada na tela e o CSV final."""
+import re
 
+import pandas as pd
+
+import ponto_engine as pe
+
+DIAS_PT = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+OK, CONFERIR, SEM_REGISTRO = "✓ OK", "⚠ Conferir", "— Sem registro"
+COLS_ES = [f"{t}{i}" for i in range(1, pe.MAX_PARES + 1) for t in ("Entrada", "Saída")]
+RE_HORA_OK = r"^(([01]\d|2[0-3]):[0-5]\d)?$"
+
+
+def motivo_simples(alerta: str) -> str:
+    a = alerta.lower()
+    regras = [
+        ("ocr do pdf", "Página escaneada lida sem IA"),
+        ("tesseract", "Página escaneada lida sem IA"),
+        ("dia ausente", "Dia não aparece no PDF"),
+        ("ímpar", "Falta uma entrada ou saída"),
+        ("fora de ordem", "Horários fora de ordem"),
+        ("16h", "Jornada acima de 16h"),
+        ("fora de sequência", "Data pode ter sido mal lida"),
+        ("duvidosa", "A IA ficou em dúvida nesta linha"),
+        ("data repetida", "Dia repetido em outra página"),
+    ]
+    for chave, texto in regras:
+        if chave in a:
+            return texto
+    m = re.search(r"ilegível: (.+)", alerta)
+    if m:
+        return f"Horário ilegível ({m.group(1)})"
+    m = re.search(r"descartado (\d\d:\d\d)", alerta)
+    if m:
+        return f"{m.group(1)} ignorado (parece total, não marcação)"
+    m = re.search(r"marcações em dia de (.+)", alerta)
+    if m:
+        return f"Marcação em dia de {m.group(1)}"
+    return alerta
+
+
+def montar_tabela(dias) -> pd.DataFrame:
+    linhas = []
+    for d in dias:
+        motivos = list(dict.fromkeys(motivo_simples(a) for a in d.alertas))
+        if "Dia não aparece no PDF" in motivos:
+            situacao = SEM_REGISTRO
+        elif motivos:
+            situacao = CONFERIR
+        else:
+            situacao = OK
+        ln = {
+            "Situação": situacao,
+            "Data": d.data.strftime("%d/%m/%Y"),
+            "Dia": DIAS_PT[d.data.weekday()],
+        }
+        pares = d.marcacoes + [""] * (2 * pe.MAX_PARES - len(d.marcacoes))
+        ln.update(dict(zip(COLS_ES, pares)))
+        ln["Ocorrência"] = d.ocorrencia
+        ln["Motivo"] = "; ".join(motivos)
+        ln["Pág."] = str(d.pagina) if d.pagina else ""
+        ln["Conferido"] = False
+        linhas.append(ln)
+    return pd.DataFrame(linhas)
+
+
+def colunas_visiveis(df: pd.DataFrame) -> list[str]:
+    """Mostra só os pares de horário usados (mínimo 2 pares)."""
+    usados = 2
+    for i in range(1, pe.MAX_PARES + 1):
+        if (df[f"Entrada{i}"] != "").any() or (df[f"Saída{i}"] != "").any():
+            usados = max(usados, i)
+    es = [c for c in COLS_ES if int(c[-1]) <= usados]
+    return ["Situação", "Data", "Dia", *es, "Ocorrência", "Motivo", "Pág.", "Conferido"]
+
+
+def resumo(df: pd.DataFrame) -> dict:
+    conferir = df["Situação"] == CONFERIR
+    return {
+        "dias": len(df),
+        "ok": int((df["Situação"] == OK).sum()),
+        "conferir": int(conferir.sum()),
+        "conferidos": int((conferir & df["Conferido"]).sum()),
+        "sem_registro": int((df["Situação"] == SEM_REGISTRO).sum()),
+        "so_scan_sem_ia": int(
+            (conferir & (df["Motivo"] == "Página escaneada lida sem IA")).sum()),
+        "inicio": df["Data"].iloc[0] if len(df) else "",
+        "fim": df["Data"].iloc[-1] if len(df) else "",
+    }
+
+
+def exportar_csv(df: pd.DataFrame, com_conferencia: bool) -> bytes:
+    """Mesmo formato de sempre: Data, Entrada1..Saída6 (+ colunas opcionais)."""
+    cols = ["Data", *COLS_ES]
+    if com_conferencia:
+        cols += ["Ocorrência", "Situação", "Motivo", "Pág.", "Conferido"]
+    saida = df[cols].copy()
+    if com_conferencia:
+        saida["Conferido"] = saida["Conferido"].map({True: "sim", False: "não"})
+    return saida.to_csv(index=False).encode("utf-8")

@@ -1,10 +1,8 @@
 import hashlib
 import io
-
 import pandas as pd
 import pdfplumber
 import streamlit as st
-a
 import legado_jbs
 import ponto_engine as pe
 import revisao as rv

@@ -465,10 +465,10 @@ def interpretar_visao(dados: dict, num: int) -> ResultadoPagina:
     return ResultadoPagina(num, dias, "visao", periodo, nota)
 
 
-def ler_pagina_visao(page, num: int, api_key: str, modelo: str) -> ResultadoPagina:
+def ler_png_visao(png: bytes, num: int, api_key: str, modelo: str) -> ResultadoPagina:
+    """Envia a imagem de uma página à IA. Pode rodar em paralelo (não usa o PDF)."""
     import anthropic
-    client = anthropic.Anthropic(api_key=api_key)
-    png = imagem_pagina_png(page)
+    client = anthropic.Anthropic(api_key=api_key, max_retries=4, timeout=180)
     resp = client.messages.create(
         model=modelo,
         max_tokens=8000,
@@ -484,6 +484,29 @@ def ler_pagina_visao(page, num: int, api_key: str, modelo: str) -> ResultadoPagi
     )
     texto = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
     return interpretar_visao(extrair_json(texto), num)
+
+
+def erro_fatal(e: Exception) -> bool:
+    s = f"{type(e).__name__} {e}".lower()
+    return any(k in s for k in ("authentication", "x-api-key", "401", "credit", "billing",
+                                 "balance", "not_found", "404", "permission", "403"))
+
+
+def explicar_erro_ia(e: Exception) -> str:
+    """Traduz erros da API para uma instrução clara."""
+    s = f"{type(e).__name__} {e}".lower()
+    if "authentication" in s or "x-api-key" in s or "401" in s:
+        return ("A chave da IA foi recusada. Confira ANTHROPIC_API_KEY em "
+                "Manage app → Settings → Secrets.")
+    if "credit" in s or "billing" in s or "balance" in s:
+        return "A conta da IA está sem créditos. Adicione créditos em console.anthropic.com → Billing."
+    if "not_found" in s or "404" in s:
+        return "O modelo de IA configurado não foi encontrado. Confira ANTHROPIC_MODEL em Secrets."
+    if "rate" in s or "429" in s or "overloaded" in s or "529" in s:
+        return "A IA está sobrecarregada agora. Tente de novo em alguns minutos."
+    if "json" in s or "expecting" in s:
+        return "A IA respondeu num formato inesperado em alguma página."
+    return f"A IA não respondeu ({type(e).__name__})."
 
 
 # --------------------------------------------------------------------------
@@ -540,47 +563,88 @@ def ler_pagina_tesseract(page, num: int) -> ResultadoPagina:
 def processar_pdf(arquivo, api_key: str | None = None, modelo: str = "claude-sonnet-5",
                   forcar_visao: bool = False, usar_tesseract: bool = True,
                   score_minimo: float = 0.9, confiar_ocr_pdf: bool = False,
-                  progresso=None):
-    """Retorna (lista_de_Dia, lista_de_ResultadoPagina)."""
+                  progresso=None, paralelo: int = 5):
+    """Retorna (dias, resultados_por_pagina, erro_da_ia_ou_vazio).
+
+    progresso(fracao_0_a_1, texto) é chamado para atualizar a tela."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     import pdfplumber
 
-    resultados = []
+    avisar = progresso or (lambda f, t: None)
+    resultados: dict[int, ResultadoPagina] = {}
+    imagem: dict[int, bool] = {}
+    fila_ia, fila_ocr = [], []
+    erro_ia = ""
+
     with pdfplumber.open(arquivo) as pdf:
         total = len(pdf.pages)
+        # Fase 1 (rápida): texto do PDF em todas as páginas
         for i, page in enumerate(pdf.pages, start=1):
-            if progresso:
-                progresso(i, total)
+            avisar(0.15 * i / total, f"Analisando página {i} de {total}…")
             eh_img = pagina_eh_imagem(page)
+            imagem[i] = eh_img
             r_txt = ler_pagina_texto(page, i)
-            escolhido = r_txt
             if eh_img:
-                escolhido.nota += " | página digitalizada (texto é OCR do PDF)"
-                for dd in escolhido.dias:
+                r_txt.nota += " | página digitalizada"
+                for dd in r_txt.dias:
                     dd.origem = "ocr-pdf"
-
+            resultados[i] = r_txt
             precisa = (forcar_visao or r_txt.score < score_minimo
                        or (eh_img and not (confiar_ocr_pdf and r_txt.score >= 0.999)))
             if precisa and api_key:
-                try:
-                    r_vis = ler_pagina_visao(page, i, api_key, modelo)
-                    if r_vis.dias or not r_txt.dias:
-                        escolhido = r_vis
-                except Exception as e:  # mantém o texto se a API falhar
-                    escolhido.nota += f" | visão falhou: {e}"
+                fila_ia.append(i)
             elif precisa and usar_tesseract and (eh_img or not r_txt.dias):
-                try:
-                    r_tes = ler_pagina_tesseract(page, i)
-                    if r_tes.score > r_txt.score:
-                        escolhido = r_tes
-                except Exception as e:
-                    escolhido.nota += f" | tesseract indisponível: {e}"
+                fila_ocr.append(i)
 
-            if escolhido.metodo == "texto" and eh_img:
-                for dd in escolhido.dias:
-                    dd.alertas.append("OCR do PDF: conferir")
-            resultados.append(escolhido)
+        # Fase 2: IA em paralelo (as imagens são geradas antes, fora das threads)
+        if fila_ia:
+            pngs = {}
+            for k, n in enumerate(fila_ia, start=1):
+                avisar(0.15 + 0.10 * k / len(fila_ia), f"Preparando imagens ({k} de {len(fila_ia)})…")
+                pngs[n] = imagem_pagina_png(pdf.pages[n - 1])
+            feitas, falhas = 0, []
+            with ThreadPoolExecutor(max_workers=paralelo) as ex:
+                futuros = {ex.submit(ler_png_visao, pngs[n], n, api_key, modelo): n for n in fila_ia}
+                for fut in as_completed(futuros):
+                    n = futuros[fut]
+                    feitas += 1
+                    avisar(0.25 + 0.75 * feitas / len(fila_ia),
+                           f"IA lendo as páginas escaneadas: {feitas} de {len(fila_ia)} prontas…")
+                    try:
+                        r_vis = fut.result()
+                        if r_vis.dias or not resultados[n].dias:
+                            resultados[n] = r_vis
+                    except Exception as e:
+                        falhas.append(n)
+                        erro_ia = erro_ia or explicar_erro_ia(e)
+                        resultados[n].nota += " | a IA não conseguiu ler esta página"
+                        if erro_fatal(e):  # chave, crédito ou modelo: insistir não adianta
+                            for f, m in futuros.items():
+                                if f.cancel():
+                                    falhas.append(m)
+                                    resultados[m].nota += " | a IA não conseguiu ler esta página"
+                            avisar(0.25, "A IA não está disponível. Lendo com o OCR gratuito…")
+                            break
+            fila_ocr += [n for n in falhas if usar_tesseract and imagem[n]]
 
-    return consolidar(resultados), resultados
+        # Fase 3: OCR gratuito (sem IA, ou onde a IA falhou)
+        for k, n in enumerate(sorted(fila_ocr), start=1):
+            avisar(0.15 + 0.85 * k / len(fila_ocr), f"Lendo página escaneada {k} de {len(fila_ocr)}…")
+            try:
+                r_tes = ler_pagina_tesseract(pdf.pages[n - 1], n)
+                if r_tes.score > resultados[n].score:
+                    resultados[n] = r_tes
+            except Exception:
+                resultados[n].nota += " | OCR gratuito indisponível"
+
+    lista = [resultados[n] for n in sorted(resultados)]
+    for r in lista:
+        if r.metodo == "texto" and imagem[r.pagina]:
+            for dd in r.dias:
+                dd.alertas.append("OCR do PDF: conferir")
+    avisar(1.0, "Pronto.")
+    return consolidar(lista), lista, erro_ia
 
 
 def consolidar(resultados: list[ResultadoPagina]) -> list[Dia]:
@@ -897,42 +961,50 @@ def passos(atual: int):
 # --------------------------------------------------------------------------
 # Barra lateral
 # --------------------------------------------------------------------------
-chave_salva = segredo("ANTHROPIC_API_KEY")
+API_KEY = segredo("ANTHROPIC_API_KEY")
+MODELO = segredo("ANTHROPIC_MODEL", "claude-sonnet-5")
+SENHA = segredo("APP_SENHA")
+IA_ATIVA = bool(API_KEY)
 
 with st.sidebar:
-    st.markdown("### Leitura de páginas escaneadas")
-    com_ia = st.radio(
-        "Como ler PDFs digitalizados?",
-        ["Com IA — mais precisa", "Sem IA — gratuita, menos precisa"],
-        index=0 if chave_salva else 1,
-        label_visibility="collapsed",
-    ).startswith("Com IA")
-    api_key = ""
-    if com_ia:
-        if chave_salva:
-            st.caption("✓ Chave da IA configurada.")
-            api_key = chave_salva
-        else:
-            api_key = st.text_input("Chave da API Anthropic", type="password",
-                                    help="Começa com sk-ant-. Pode ser salva em Settings → Secrets.")
-    st.caption("PDFs com texto (não escaneados) são lidos sem IA em qualquer opção.")
-
-    with st.expander("Avançado"):
-        modelo = st.text_input("Modelo da IA", value=segredo("ANTHROPIC_MODEL", "claude-sonnet-5"))
-        forcar_visao = st.checkbox("Usar IA em todas as páginas", value=False, disabled=not com_ia)
-        confiar_ocr = st.checkbox("Economizar chamadas de IA", value=False, disabled=not com_ia,
+    if IA_ATIVA:
+        st.markdown("**✓ Leitura com IA ativa**")
+        st.caption("Páginas escaneadas são lidas por IA automaticamente. "
+                   "PDFs com texto são lidos direto, sem IA.")
+    else:
+        st.markdown("**IA não configurada**")
+        st.caption("Páginas escaneadas estão sendo lidas por OCR gratuito, que é menos preciso. "
+                   "Para ativar a IA, adicione ANTHROPIC_API_KEY em Manage app → Settings → Secrets.")
+    with st.expander("Opções avançadas"):
+        forcar_visao = st.checkbox("Usar IA em todas as páginas", value=False, disabled=not IA_ATIVA,
+                                   help="Inclusive nas que têm texto. Mais lento e mais caro.")
+        confiar_ocr = st.checkbox("Economizar chamadas de IA", value=False, disabled=not IA_ATIVA,
                                   help="Aceita o texto embutido do PDF quando ele passa na validação. "
                                        "Mais barato, mas um 06 lido como 08 pode passar despercebido.")
-        usar_tesseract = st.checkbox("Tentar OCR gratuito quando não houver IA", value=True)
         modo_jbs = st.checkbox("Modo antigo (JBS)", value=False,
                                help="Usa exatamente a lógica anterior, só para PDFs JBS com texto.")
 
 
-@st.cache_data(show_spinner=False)
-def ler_pdf(pdf_bytes, api_key, modelo, forcar, confiar, tesseract):
-    dias, res = processar_pdf(io.BytesIO(pdf_bytes), api_key=api_key or None, modelo=modelo,
-                                 forcar_visao=forcar, usar_tesseract=tesseract,
-                                 confiar_ocr_pdf=confiar)
+@st.cache_resource
+def _resultados_guardados():
+    """Guarda resultados já processados (vale para todos os usuários), para não
+    pagar a IA duas vezes pelo mesmo PDF."""
+    return {}
+
+
+def ler_pdf(pdf_bytes, opcoes):
+    guardados = _resultados_guardados()
+    chave = hashlib.md5(pdf_bytes + repr(opcoes).encode()).hexdigest()
+    if chave in guardados:
+        return guardados[chave]
+
+    barra = st.progress(0.0, text="Abrindo o PDF…")
+    dias, res, erro_ia = processar_pdf(
+        io.BytesIO(pdf_bytes), api_key=API_KEY or None, modelo=MODELO,
+        forcar_visao=opcoes["forcar"], confiar_ocr_pdf=opcoes["confiar"],
+        progresso=lambda f, t: barra.progress(min(max(f, 0.0), 1.0), text=t))
+    barra.empty()
+
     paginas = pd.DataFrame([{
         "Página": r.pagina,
         "Lida por": {"texto": "Texto do PDF", "visao": "IA",
@@ -942,7 +1014,12 @@ def ler_pdf(pdf_bytes, api_key, modelo, forcar, confiar, tesseract):
         "Qualidade": round(r.score * 100),
         "Observação": r.nota.strip(" |"),
     } for r in res])
-    return montar_tabela(dias), paginas
+    saida = (montar_tabela(dias), paginas, erro_ia, chave)
+    if not erro_ia:  # com erro da IA, não guarda: permite tentar de novo
+        if len(guardados) >= 30:
+            guardados.pop(next(iter(guardados)))
+        guardados[chave] = saida
+    return saida
 
 
 # --------------------------------------------------------------------------
@@ -954,6 +1031,15 @@ st.markdown("""
   <p>Transforma o cartão de ponto em PDF numa planilha de entradas e saídas por dia,
   e aponta o que precisa de conferência antes do uso.</p>
 </div>""", unsafe_allow_html=True)
+
+if SENHA and not st.session_state.get("liberado"):
+    digitada = st.text_input("Senha de acesso", type="password")
+    if digitada == SENHA:
+        st.session_state.liberado = True
+        st.rerun()
+    if digitada:
+        st.error("Senha incorreta.")
+    st.stop()
 
 arquivo = st.file_uploader("Cartão de ponto em PDF", type="pdf", label_visibility="collapsed")
 
@@ -990,23 +1076,21 @@ elif modo_jbs:
 
 # ---------------- leitura automática ------------------------------------
 else:
-    if com_ia and not api_key:
-        st.info("Para usar a IA, informe a chave na barra lateral. Enquanto isso, o PDF é lido sem IA.")
-
     pdf_bytes = arquivo.getvalue()
-    with st.spinner("Lendo o PDF… páginas escaneadas levam alguns segundos cada."):
-        tabela, paginas = ler_pdf(pdf_bytes, api_key if com_ia else "", modelo,
-                                  forcar_visao, confiar_ocr, usar_tesseract)
+    opcoes = {"ia": IA_ATIVA, "modelo": MODELO, "forcar": forcar_visao, "confiar": confiar_ocr}
+    tabela, paginas, erro_ia, chave = ler_pdf(pdf_bytes, opcoes)
+
+    if erro_ia:
+        st.error(f"**Algumas páginas não puderam ser lidas pela IA.** {erro_ia} "
+                 "Essas páginas foram lidas pelo OCR gratuito e estão marcadas para conferência.")
 
     if tabela.empty:
         passos(1)
-        st.error("Não encontrei uma tabela de ponto neste PDF. Se ele for escaneado, "
-                 "use a opção “Com IA” na barra lateral.")
+        st.error("Não encontrei uma tabela de ponto neste PDF. Confira se é um cartão de ponto "
+                 "e se as páginas não estão em branco ou cortadas.")
         st.stop()
 
     # a tabela editada fica guardada enquanto o mesmo PDF e as mesmas opções estiverem em uso
-    chave = hashlib.md5(pdf_bytes + repr((com_ia, bool(api_key), modelo, forcar_visao,
-                                          confiar_ocr, usar_tesseract)).encode()).hexdigest()
     if st.session_state.get("chave") != chave:
         st.session_state.chave = chave
         st.session_state.tabela = tabela.copy()
@@ -1024,12 +1108,12 @@ else:
   <div class="{'alerta' if pendentes else 'bom'}"><span>Para conferir</span><strong>{pendentes}</strong></div>
 </div>""", unsafe_allow_html=True)
 
-    # explicação quando o problema é só falta de IA
-    if not (com_ia and api_key) and (r["so_scan_sem_ia"] + r["sem_registro"]) > r["dias"] * 0.3:
+    # explicação quando o problema é a falta de IA
+    if not IA_ATIVA and (r["so_scan_sem_ia"] + r["sem_registro"]) > r["dias"] * 0.3:
         st.markdown(f"""
-<div class="aviso"><strong>Este PDF é escaneado e foi lido sem IA.</strong>
+<div class="aviso"><strong>Este PDF é escaneado e a leitura por IA não está ativada.</strong>
 {r['sem_registro']} dias ficaram sem registro e {r['so_scan_sem_ia']} vieram de uma leitura imprecisa da imagem.
-Para um resultado confiável, escolha <b>Com IA</b> na barra lateral e envie o PDF de novo.</div>""",
+Com a IA configurada, a leitura destas páginas fica muito mais confiável.</div>""",
                     unsafe_allow_html=True)
 
     aba_revisar, aba_paginas = st.tabs(["Revisar dias", "Páginas do PDF"])
@@ -1088,7 +1172,7 @@ Para um resultado confiável, escolha <b>Com IA</b> na barra lateral e envie o P
                 format="%d%%", min_value=0, max_value=100,
                 help="Parte dos dias da página lidos sem nenhuma inconsistência")},
         )
-        st.caption("Qualidade baixa numa página escaneada normalmente se resolve com a opção “Com IA”.")
+        st.caption("Qualidade é a parte dos dias da página lidos sem nenhuma inconsistência.")
 
     st.divider()
     d1, d2 = st.columns([2, 3])
@@ -1101,6 +1185,6 @@ Para um resultado confiável, escolha <b>Com IA</b> na barra lateral e envie o P
 st.markdown("""
 <div class="rodape">
 Em conformidade com a LGPD: os arquivos são usados só para a conversão e não ficam guardados neste site.
-Com a opção “Com IA”, as imagens das páginas escaneadas são enviadas à API da Anthropic apenas para a transcrição.
+As imagens das páginas escaneadas são enviadas à API da Anthropic apenas para a transcrição.
 <br>Desenvolvido por Lucas de Matos Coelho.
 </div>""", unsafe_allow_html=True)

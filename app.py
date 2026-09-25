@@ -1183,11 +1183,17 @@ def _resultados_guardados():
     return {}
 
 
+# Troque este número sempre que o formato dos resultados mudar:
+# resultados guardados por versões anteriores passam a ser ignorados.
+VERSAO_RESULTADOS = "3-meses"
+
+
 def ler_pdf(pdf_bytes, opcoes):
     guardados = _resultados_guardados()
-    chave = hashlib.md5(pdf_bytes + repr(opcoes).encode()).hexdigest()
-    if chave in guardados:
-        return guardados[chave]
+    chave = hashlib.md5(pdf_bytes + repr((VERSAO_RESULTADOS, opcoes)).encode()).hexdigest()
+    anterior = guardados.get(chave)
+    if isinstance(anterior, tuple) and len(anterior) == 5:
+        return anterior
 
     barra = st.progress(0.0, text="Abrindo o PDF…")
     dias, res, erro_ia, cobertura = processar_pdf(

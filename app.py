@@ -105,6 +105,7 @@ class Dia:
     origem: str = ""          # texto | visao | tesseract | legado
     pagina: int = 0
     alertas: list[str] = field(default_factory=list)
+    competencia: str = ""
 
 
 @dataclass
@@ -114,6 +115,8 @@ class ResultadoPagina:
     metodo: str
     periodo: tuple[date, date] | None = None
     nota: str = ""
+    periodo_deduzido: bool = False
+    fonte_periodo: str = ""   # cabecalho | ordem | dias
 
     @property
     def score(self) -> float:
@@ -266,13 +269,39 @@ def _faixa_marcacoes(linhas):
     return x_ini, x_fim, ln_cab["y"]
 
 
+RE_PERIODO_FLEX = re.compile(
+    r"(\d{1,2}/\d{1,2}/\d{4})\s*(?:a|at[eé]|ate|à|-|–|to)\s*(\d{1,2})/(\d{1,2})(?:/(\d{1,4}))?", re.I)
+
+
+def somar_mes(d: date, n: int = 1) -> date:
+    import calendar
+    m = d.month - 1 + n
+    a, m = d.year + m // 12, m % 12 + 1
+    return date(a, m, min(d.day, calendar.monthrange(a, m)[1]))
+
+
 def _periodo(texto: str):
-    m = RE_PERIODO.search(texto)
-    if not m:
-        return None
-    a, b = parse_data(m.group(1)), parse_data(m.group(2))
-    if a and b and a <= b:
-        return a, b
+    """Lê 'dd/mm/aaaa a dd/mm/aaaa' mesmo com o ano final cortado ou coberto
+    (ex.: '26/10/2025 a 25/11/20Fls.: 31' → 26/10/2025 a 25/11/2025)."""
+    for m in RE_PERIODO_FLEX.finditer(texto or ""):
+        ini = parse_data(m.group(1))
+        if not ini:
+            continue
+        d, mo, ano = int(m.group(2)), int(m.group(3)), (m.group(4) or "")
+        fim = None
+        if len(ano) in (2, 4):
+            try:
+                fim = date(int(ano) + (2000 if len(ano) == 2 else 0), mo, d)
+            except ValueError:
+                fim = None
+        if fim is None or not (0 <= (fim - ini).days <= 62):
+            # ano ausente, cortado ou ilegível: deduz a partir do início
+            try:
+                fim = date(ini.year + (1 if mo < ini.month else 0), mo, d)
+            except ValueError:
+                continue
+        if 0 <= (fim - ini).days <= 62:
+            return ini, fim
     return None
 
 
@@ -423,7 +452,9 @@ Regras:
 - "ocorrencia": texto de ocorrência do dia, se houver (Folga, DSR, Férias,
   Feriado, Atestado, Falta, Compensado, Liberação pela Empresa etc.). Senão "".
 - "duvida": true se algo na linha estiver ilegível ou ambíguo.
-- "periodo": período do cartão como impresso ("dd/mm/aaaa a dd/mm/aaaa") ou "".
+- "periodo": período do cartão ("dd/mm/aaaa a dd/mm/aaaa") ou "". Se o ano estiver
+  cortado ou coberto por carimbo/numeração de folha (ex.: "25/11/20"), complete-o a
+  partir da data inicial e dos dias da tabela.
 - Se a página não for um cartão de ponto, devolva "linhas": [].
 
 Responda APENAS com JSON válido, sem texto antes ou depois:
@@ -564,7 +595,7 @@ def processar_pdf(arquivo, api_key: str | None = None, modelo: str = "claude-son
                   forcar_visao: bool = False, usar_tesseract: bool = True,
                   score_minimo: float = 0.9, confiar_ocr_pdf: bool = False,
                   progresso=None, paralelo: int = 5):
-    """Retorna (dias, resultados_por_pagina, erro_da_ia_ou_vazio).
+    """Retorna (dias, resultados_por_pagina, erro_da_ia_ou_vazio, cobertura_mes_a_mes).
 
     progresso(fracao_0_a_1, texto) é chamado para atualizar a tela."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -643,8 +674,165 @@ def processar_pdf(arquivo, api_key: str | None = None, modelo: str = "claude-son
         if r.metodo == "texto" and imagem[r.pagina]:
             for dd in r.dias:
                 dd.alertas.append("OCR do PDF: conferir")
+    dia_ini, cobertura = ajustar_periodos(lista)
+    dias = consolidar(lista)
+    faltando = [(c["_ini"], c["_fim"], c["Competência"]) for c in cobertura
+                if c["Situação"].startswith("Faltando")]
+    for d in dias:
+        d.competencia = competencia(d.data, dia_ini)
+        if "dia ausente no PDF" in d.alertas and any(a <= d.data <= b for a, b, _ in faltando):
+            d.alertas = ["período inteiro ausente do PDF"]
     avisar(1.0, "Pronto.")
-    return consolidar(lista), lista, erro_ia
+    return dias, lista, erro_ia, cobertura
+
+
+def janela(d: date, dia_ini: int) -> tuple[date, date]:
+    """Período de apuração (ciclo da empresa) que contém a data d."""
+    import calendar
+    ult = calendar.monthrange(d.year, d.month)[1]
+    if d.day >= min(dia_ini, ult):
+        ini = date(d.year, d.month, min(dia_ini, ult))
+    else:
+        ant = somar_mes(date(d.year, d.month, 1), -1)
+        ini = date(ant.year, ant.month, min(dia_ini, calendar.monthrange(ant.year, ant.month)[1]))
+    fim = somar_mes(date(ini.year, ini.month, 1), 1)
+    fim = date(fim.year, fim.month, min(dia_ini, calendar.monthrange(fim.year, fim.month)[1])) - timedelta(days=1)
+    return ini, fim
+
+
+def competencia(d: date, dia_ini: int) -> str:
+    return f"{janela(d, dia_ini)[1]:%m/%Y}"
+
+
+def _idx_mes(p) -> int:
+    """Número da competência (mês do fim do período)."""
+    return p[1].year * 12 + p[1].month - 1
+
+
+def _periodo_do_idx(idx: int, dia_ini: int):
+    return janela(date(idx // 12, idx % 12 + 1, 1), dia_ini)
+
+
+def ajustar_periodos(lista: list[ResultadoPagina]):
+    """Descobre o ciclo (ex.: dia 26 ao 25), deduz o período das páginas sem
+    cabeçalho legível (pela ordem das páginas e pelos dias lidos), remove linhas
+    fora do período e monta a cobertura mês a mês."""
+    from collections import Counter
+    for r in lista:
+        if r.periodo:
+            r.fonte_periodo = "cabecalho"
+    inicios = Counter(r.periodo[0].day for r in lista if r.periodo)
+    dia_ini = inicios.most_common(1)[0][0] if inicios else 1
+
+    # --- 1) período pela ORDEM das páginas (cartões costumam vir em sequência)
+    pos_cab = [(k, _idx_mes(r.periodo)) for k, r in enumerate(lista) if r.fonte_periodo == "cabecalho"]
+    meses_cab = Counter(m for _, m in pos_cab)
+
+    def candidato_ordem(k):
+        esq = next(((a, m) for a, m in reversed(pos_cab) if a < k), None)
+        dir_ = next(((b, m) for b, m in pos_cab if b > k), None)
+        if esq and dir_:
+            a, ma = esq
+            b, mb = dir_
+            for s_ in (1, -1):
+                if mb - ma == s_ * (b - a):
+                    return ma + s_ * (k - a)
+        return None  # sem extrapolar: cartões costumam vir em blocos fora de ordem
+
+    for k, r in enumerate(lista):
+        if r.fonte_periodo == "cabecalho":
+            continue
+        pelos_dias = None
+        lidos = [d.data for d in r.dias if d.marcacoes or d.ocorrencia]
+        if len(lidos) >= 3:
+            votos = Counter(_idx_mes(janela(x, dia_ini)) for x in lidos)
+            mes, qtd = votos.most_common(1)[0]
+            if qtd >= 0.6 * len(lidos):  # a maioria das datas no mesmo mês
+                pelos_dias = mes
+        cand = candidato_ordem(k)
+        usar_ordem = cand is not None and meses_cab[cand] == 0 and (
+            pelos_dias is None or pelos_dias == cand or meses_cab[pelos_dias] > 0)
+        if usar_ordem:
+            r.periodo, r.fonte_periodo = _periodo_do_idx(cand, dia_ini), "ordem"
+            r.nota += " | período deduzido pela ordem das páginas"
+        elif pelos_dias is not None:
+            r.periodo, r.fonte_periodo = _periodo_do_idx(pelos_dias, dia_ini), "dias"
+            r.nota += " | período deduzido pelos dias da página"
+        r.periodo_deduzido = bool(r.periodo)
+
+    # --- 2) remove linhas fora do período de cada página
+    for r in lista:
+        if not (r.periodo and r.dias):
+            continue
+        ini, fim = r.periodo
+        fora = [d for d in r.dias if not ini <= d.data <= fim]
+        if not fora:
+            continue
+        if r.fonte_periodo == "ordem" or len(fora) <= 0.3 * len(r.dias):
+            r.dias = [d for d in r.dias if ini <= d.data <= fim]
+            r.nota += f" | {len(fora)} linha(s) com data fora do período descartada(s)"
+        elif r.fonte_periodo == "cabecalho":
+            r.nota += " | muitos dias fora do período do cabeçalho: conferir"
+            for d in fora:
+                d.alertas.append("data fora do período do cabeçalho")
+
+    # --- 3) cobertura mês a mês
+    com_periodo = [r for r in lista if r.periodo]
+    cobertura = []
+    lidos_todos = [d.data for r in lista for d in r.dias if d.marcacoes or d.ocorrencia]
+    if com_periodo:
+        fim_geral = max(r.periodo[1] for r in com_periodo)
+        jan = janela(min(r.periodo[0] for r in com_periodo), dia_ini)
+        primeira = jan
+        # início e fim do contrato: primeiro e último dia com registro
+        ini_contrato = min(lidos_todos) if lidos_todos else jan[0]
+        fim_contrato = max(lidos_todos) if lidos_todos else fim_geral
+        ultima = janela(fim_geral, dia_ini)
+        while jan[0] <= fim_geral:
+            paginas = [r for r in com_periodo if r.periodo[0] <= jan[1] and r.periodo[1] >= jan[0]]
+            nums = ", ".join(str(r.pagina) for r in paginas)
+            if not paginas:
+                situacao = "Faltando no PDF"
+            elif len(paginas) > 1:
+                situacao = f"Repetido (págs. {nums})"
+            else:
+                r = paginas[0]
+                ini, fim = max(r.periodo[0], jan[0]), min(r.periodo[1], jan[1])
+                if jan == primeira:
+                    ini = max(ini, ini_contrato)
+                if jan == ultima:
+                    fim = min(fim, fim_contrato)
+                if fim < ini:  # página atribuída fora do contrato: dedução não confiável
+                    ini, fim = max(r.periodo[0], jan[0]), min(r.periodo[1], jan[1])
+                total = (fim - ini).days + 1
+                lidos = sum(1 for d in r.dias if ini <= d.data <= fim and (d.marcacoes or d.ocorrencia))
+                if lidos < 0.5 * total:
+                    situacao = f"Página presente, mas só {lidos} de {total} dias lidos"
+                elif (ini, fim) == jan:
+                    situacao = "OK"
+                else:
+                    motivo = ("admissão" if jan == primeira and ini > jan[0]
+                              else "rescisão" if jan == ultima and fim < jan[1] else "período parcial")
+                    situacao = f"Parcial: {ini:%d/%m} a {fim:%d/%m} ({motivo})"
+                if r.fonte_periodo == "ordem":
+                    situacao += " · período deduzido pela ordem das páginas"
+                elif r.fonte_periodo == "dias":
+                    situacao += " · período deduzido pelos dias"
+            cobertura.append({
+                "Competência": f"{jan[1]:%m/%Y}",
+                "Período": f"{jan[0]:%d/%m/%Y} a {jan[1]:%d/%m/%Y}",
+                "Página": nums or "—",
+                "Situação": situacao,
+                "_ini": jan[0], "_fim": jan[1],
+            })
+            jan = janela(jan[1] + timedelta(days=1), dia_ini)
+    sem_mes = [str(r.pagina) for r in lista if not r.periodo]
+    if sem_mes:
+        for c in cobertura:
+            if c["Situação"] == "Faltando no PDF":
+                c["Situação"] = ("Não identificado: pode estar numa das páginas não lidas "
+                                 f"({', '.join(sem_mes)})")
+    return dia_ini, cobertura
 
 
 def consolidar(resultados: list[ResultadoPagina]) -> list[Dia]:
@@ -705,7 +893,9 @@ def motivo_simples(alerta: str) -> str:
     regras = [
         ("ocr do pdf", "Página escaneada lida sem IA"),
         ("tesseract", "Página escaneada lida sem IA"),
+        ("período inteiro ausente", "Mês inteiro ausente do PDF"),
         ("dia ausente", "Dia não aparece no PDF"),
+        ("fora do período do cabeçalho", "Data fora do período impresso na página"),
         ("ímpar", "Falta uma entrada ou saída"),
         ("fora de ordem", "Horários fora de ordem"),
         ("16h", "Jornada acima de 16h"),
@@ -732,7 +922,7 @@ def montar_tabela(dias) -> pd.DataFrame:
     linhas = []
     for d in dias:
         motivos = list(dict.fromkeys(motivo_simples(a) for a in d.alertas))
-        if "Dia não aparece no PDF" in motivos:
+        if "Dia não aparece no PDF" in motivos or "Mês inteiro ausente do PDF" in motivos:
             situacao = SEM_REGISTRO
         elif motivos:
             situacao = CONFERIR
@@ -742,6 +932,7 @@ def montar_tabela(dias) -> pd.DataFrame:
             "Situação": situacao,
             "Data": d.data.strftime("%d/%m/%Y"),
             "Dia": DIAS_PT[d.data.weekday()],
+            "Competência": d.competencia,
         }
         pares = d.marcacoes + [""] * (2 * MAX_PARES - len(d.marcacoes))
         ln.update(dict(zip(COLS_ES, pares)))
@@ -760,7 +951,7 @@ def colunas_visiveis(df: pd.DataFrame) -> list[str]:
         if (df[f"Entrada{i}"] != "").any() or (df[f"Saída{i}"] != "").any():
             usados = max(usados, i)
     es = [c for c in COLS_ES if int(c[-1]) <= usados]
-    return ["Situação", "Data", "Dia", *es, "Ocorrência", "Motivo", "Pág.", "Conferido"]
+    return ["Situação", "Competência", "Data", "Dia", *es, "Ocorrência", "Motivo", "Pág.", "Conferido"]
 
 
 def resumo(df: pd.DataFrame) -> dict:
@@ -782,7 +973,7 @@ def exportar_csv(df: pd.DataFrame, com_conferencia: bool) -> bytes:
     """Mesmo formato de sempre: Data, Entrada1..Saída6 (+ colunas opcionais)."""
     cols = ["Data", *COLS_ES]
     if com_conferencia:
-        cols += ["Ocorrência", "Situação", "Motivo", "Pág.", "Conferido"]
+        cols += ["Competência", "Ocorrência", "Situação", "Motivo", "Pág.", "Conferido"]
     saida = df[cols].copy()
     if com_conferencia:
         saida["Conferido"] = saida["Conferido"].map({True: "sim", False: "não"})
@@ -999,7 +1190,7 @@ def ler_pdf(pdf_bytes, opcoes):
         return guardados[chave]
 
     barra = st.progress(0.0, text="Abrindo o PDF…")
-    dias, res, erro_ia = processar_pdf(
+    dias, res, erro_ia, cobertura = processar_pdf(
         io.BytesIO(pdf_bytes), api_key=API_KEY or None, modelo=MODELO,
         forcar_visao=opcoes["forcar"], confiar_ocr_pdf=opcoes["confiar"],
         progresso=lambda f, t: barra.progress(min(max(f, 0.0), 1.0), text=t))
@@ -1014,7 +1205,8 @@ def ler_pdf(pdf_bytes, opcoes):
         "Qualidade": round(r.score * 100),
         "Observação": r.nota.strip(" |"),
     } for r in res])
-    saida = (montar_tabela(dias), paginas, erro_ia, chave)
+    meses = pd.DataFrame([{k: v for k, v in c.items() if not k.startswith("_")} for c in cobertura])
+    saida = (montar_tabela(dias), paginas, erro_ia, chave, meses)
     if not erro_ia:  # com erro da IA, não guarda: permite tentar de novo
         if len(guardados) >= 30:
             guardados.pop(next(iter(guardados)))
@@ -1078,7 +1270,7 @@ elif modo_jbs:
 else:
     pdf_bytes = arquivo.getvalue()
     opcoes = {"ia": IA_ATIVA, "modelo": MODELO, "forcar": forcar_visao, "confiar": confiar_ocr}
-    tabela, paginas, erro_ia, chave = ler_pdf(pdf_bytes, opcoes)
+    tabela, paginas, erro_ia, chave, meses = ler_pdf(pdf_bytes, opcoes)
 
     if erro_ia:
         st.error(f"**Algumas páginas não puderam ser lidas pela IA.** {erro_ia} "
@@ -1116,7 +1308,20 @@ else:
 Com a IA configurada, a leitura destas páginas fica muito mais confiável.</div>""",
                     unsafe_allow_html=True)
 
-    aba_revisar, aba_paginas = st.tabs(["Revisar dias", "Páginas do PDF"])
+    if not meses.empty:
+        faltam = meses[meses["Situação"].str.startswith(("Faltando", "Não identificado"))]["Competência"].tolist()
+        repetidos = meses[meses["Situação"].str.startswith("Repetido")]["Competência"].tolist()
+        if faltam or repetidos:
+            partes = []
+            if faltam:
+                partes.append(f"faltam no PDF: <b>{', '.join(faltam)}</b>")
+            if repetidos:
+                partes.append(f"aparecem mais de uma vez: <b>{', '.join(repetidos)}</b>")
+            st.markdown(f"""<div class="aviso"><strong>Atenção aos meses do cartão.</strong>
+Competências que {' e '.join(partes)}. Veja a aba “Meses”.</div>""", unsafe_allow_html=True)
+
+    aba_revisar, aba_meses, aba_paginas = st.tabs(
+        ["Revisar dias", f"Meses ({len(meses)})", "Páginas do PDF"])
 
     with aba_revisar:
         c1, c2 = st.columns([3, 2])
@@ -1137,6 +1342,7 @@ Com a IA configurada, a leitura destas páginas fica muito mais confiável.</div
             config = {
                 "Situação": st.column_config.TextColumn(width="small"),
                 "Data": st.column_config.TextColumn(width="small"),
+                "Competência": st.column_config.TextColumn("Compet.", width="small"),
                 "Dia": st.column_config.TextColumn(width="small"),
                 "Ocorrência": st.column_config.TextColumn(width="medium"),
                 "Motivo": st.column_config.TextColumn("Por que conferir", width="large"),
@@ -1150,7 +1356,7 @@ Com a IA configurada, a leitura destas páginas fica muito mais confiável.</div
             editada = st.data_editor(
                 vis[cols], column_config=config, hide_index=True, use_container_width=True,
                 height=min(38 + 35 * len(vis), 560),
-                disabled=["Situação", "Data", "Dia", "Motivo", "Pág."],
+                disabled=["Situação", "Competência", "Data", "Dia", "Motivo", "Pág."],
                 key=f"ed_{chave}_{filtro}",
             )
             textos = [c for c in cols if c in COLS_ES or c == "Ocorrência"]
@@ -1164,6 +1370,25 @@ Com a IA configurada, a leitura destas páginas fica muito mais confiável.</div
                 st.rerun()
             st.caption("Clique num horário para corrigir (formato HH:MM). Marque “Conferido” "
                        "depois de comparar a linha com o PDF. As alterações vão para o CSV.")
+
+    with aba_meses:
+        if meses.empty:
+            st.info("Não foi possível identificar os períodos deste cartão.")
+        else:
+            def _cor(v):
+                if v.startswith("OK"):
+                    return "color: #2F7D4F"
+                if v.startswith(("Faltando", "Repetido", "Página presente", "Não identificado")):
+                    return "color: #A15C07; font-weight: 600"
+                return "color: #4A5B6E"
+            estilo = meses.style
+            pintar = getattr(estilo, "map", None) or estilo.applymap  # pandas novo/antigo
+            st.dataframe(pintar(_cor, subset=["Situação"]),
+                         hide_index=True, use_container_width=True)
+            st.caption("Cada linha é um período de apuração do cartão, do primeiro ao último mês. "
+                       "“Parcial” marca o mês da admissão ou da rescisão. “Faltando no PDF” "
+                       "significa que nenhuma página cobre aquele mês. “Página presente, mas…” "
+                       "indica que a página existe e a leitura falhou: confira no PDF.")
 
     with aba_paginas:
         st.dataframe(
